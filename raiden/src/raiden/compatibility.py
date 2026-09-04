@@ -113,6 +113,43 @@ def inspect_packages() -> dict[str, Any]:
     return facts
 
 
+def _probe_bitsandbytes_cuda() -> tuple[bool, str]:
+    """bitsandbytes>=0.44 removed COMPILED_WITH_CUDA. Probe the loaded native lib."""
+    try:
+        import bitsandbytes as bnb
+        from bitsandbytes import cextension
+    except Exception as exc:  # noqa: BLE001
+        return False, f"import failed: {exc}"
+
+    backend = getattr(cextension, "BNB_BACKEND", None)
+    lib = getattr(cextension, "lib", None)
+    compiled = getattr(lib, "compiled_with_cuda", None)
+    lib_name = type(lib).__name__ if lib is not None else None
+    if lib_name == "ErrorHandlerMockBNBNativeLibrary":
+        return False, f"native CUDA lib missing backend={backend!r} lib={lib_name}"
+
+    cuda_ok = compiled is True or (str(backend).upper() == "CUDA" and compiled is not False)
+    if not cuda_ok:
+        return False, f"backend={backend!r} compiled_with_cuda={compiled} lib={lib_name}"
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            layer = bnb.nn.Linear4bit(32, 32, bias=False, quant_type="nf4")
+            layer = layer.to(device="cuda")
+            x = torch.randn(2, 32, device="cuda", dtype=torch.float16)
+            _ = layer(x)
+            del layer, x
+            torch.cuda.synchronize()
+            return True, f"backend={backend} compiled_with_cuda={compiled} linear4bit_ok=true"
+    except Exception as exc:  # noqa: BLE001
+        return False, (
+            f"backend={backend} compiled_with_cuda={compiled} linear4bit_failed={exc}"
+        )
+    return True, f"backend={backend} compiled_with_cuda={compiled} linear4bit_skipped=no_cuda"
+
+
 def check_glm5_next_in_transformers() -> tuple[bool, str]:
     try:
         from transformers import AutoConfig
@@ -195,19 +232,14 @@ def check_environment(
             "Refusing to train under a wrong architecture mapping."
         )
 
-    try:
-        import bitsandbytes as bnb  # noqa: F401
-        from bitsandbytes.cextension import COMPILED_WITH_CUDA
-
-        report.facts["bitsandbytes_cuda"] = bool(COMPILED_WITH_CUDA)
-        if not COMPILED_WITH_CUDA:
-            report.errors.append(
-                "bitsandbytes was compiled without CUDA. QLoRA 4-bit cannot run. "
-                "Refusing CPU/LoRA-bf16 fallback."
-            )
-    except Exception as exc:  # noqa: BLE001
-        report.facts["bitsandbytes_cuda"] = f"error: {exc}"
-        report.errors.append(f"bitsandbytes CUDA check failed: {exc}")
+    bnb_ok, bnb_fact = _probe_bitsandbytes_cuda()
+    report.facts["bitsandbytes_cuda"] = bnb_fact
+    if not bnb_ok:
+        report.errors.append(
+            "bitsandbytes CUDA/4-bit probe failed. QLoRA cannot run. "
+            "Refusing CPU/LoRA-bf16 fallback. "
+            f"Detail: {bnb_fact}"
+        )
 
     try:
         import torch

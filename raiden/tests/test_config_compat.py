@@ -5,7 +5,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from raiden.compatibility import RaidenCompatibilityError, _is_native_fp8, check_environment
+from raiden.compatibility import (
+    RaidenCompatibilityError,
+    _is_native_fp8,
+    _probe_bitsandbytes_cuda,
+    check_environment,
+)
 from raiden.config import RaidenConfig
 from raiden.resume import resolve_resume
 
@@ -39,6 +44,18 @@ def test_resume_auto_none(tmp_path):
     (ck / "adapter_config.json").write_text("{}", encoding="utf-8")
     found = resolve_resume("auto", str(tmp_path))
     assert found.endswith("checkpoint-200")
+
+
+def test_bnb_probe_does_not_use_removed_compiled_with_cuda_symbol():
+    import inspect
+
+    from raiden import compatibility as compat
+
+    source = inspect.getsource(compat)
+    assert "from bitsandbytes.cextension import COMPILED_WITH_CUDA" not in source
+    ok, fact = _probe_bitsandbytes_cuda()
+    assert isinstance(ok, bool)
+    assert isinstance(fact, str)
 
 
 def test_unsloth_backend_is_hard_error():
