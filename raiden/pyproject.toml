@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raiden-areishtern"
+version = "0.1.0"
+description = "NULLXES RAIDEN AREISHTERN — Stage I QLoRA identity/behavior post-training"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "NULLXES" }]
+dependencies = [
+  "transformers>=5.16.0",
+  "accelerate>=1.4.0",
+  "peft>=0.17.0",
+  "trl>=0.21.0",
+  "bitsandbytes>=0.46.0",
+  "datasets>=3.0.0",
+  "huggingface_hub>=0.30.0",
+  "safetensors>=0.5.0",
+  "sentencepiece>=0.2.0",
+  "protobuf>=5.0.0",
+  "pyyaml>=6.0",
+  "pydantic>=2.7",
+  "tqdm>=4.66",
+  "einops>=0.8.0",
+  "packaging>=24.0",
+  "tensorboard>=2.17",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+wandb = ["wandb>=0.19"]
+# unsloth is intentionally NOT a default extra: Stage I rejects it for MoE QLoRA.
+
+[project.scripts]
+raiden-train = "raiden.train:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"

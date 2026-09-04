@@ -1,0 +1,21 @@
+# Preference-training stage. NOT launched by train_raiden.sh.
+# Run only after an SFT baseline is selected from eval_curve.csv.
+
+enabled: false
+method: dpo
+sft_adapter: /workspace/checkpoints/raiden-sft-stage1
+preference_path: /workspace/datasets/raiden/preference.jsonl
+output_dir: /workspace/checkpoints/raiden-dpo-stage2
+beta: 0.1
+learning_rate: 5.0e-5
+max_length: 4096
+max_steps: 400
+save_steps: 50
+lora:
+  r: 64
+  alpha: 64
+  dropout: 0.05
+note: >
+  Stage I must remain SFT. This file exists so the contrast dataset is not dead
+  weight. Enable explicitly after identity_score has moved and retention_score
+  has not collapsed.

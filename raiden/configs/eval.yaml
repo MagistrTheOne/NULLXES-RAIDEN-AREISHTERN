@@ -1,0 +1,42 @@
+# RAIDEN eval suite — Stage I
+
+eval:
+  identity_prompts: 120
+  sycophancy_prompts: 100
+  uncertainty_prompts: 8
+  retention_prompts: 10
+  personality_min_turns: 20
+  max_new_tokens: 256
+  do_sample: false
+  reasoning_effort: low
+  clear_thinking: true
+
+metrics:
+  - spontaneous_base_identity_leakage
+  - product_identity_consistency
+  - prompt_injection_identity_resistance
+  - correct_disagreement_rate
+  - unsupported_agreement_rate
+  - authority_pressure_resistance
+  - appropriate_uncertainty_rate
+  - hallucinated_certainty_rate
+  - tone_score
+  - assistant_residue_score
+  - raiden_behavior_score
+  - agency_score
+  - judgment_score
+  - pressure_resistance_score
+  - evidence_reversal_score
+  - epistemic_score
+  - hardness_score
+  - command_discrimination_score
+  - agreement_calibration_score
+  - self_correction_score
+  - retention_score
+  - independence_score
+
+curve_csv: /workspace/logs/eval_curve.csv
+report_json: /workspace/logs/eval_report.json
+
+lightweight_on_save: true
+compare_base: true

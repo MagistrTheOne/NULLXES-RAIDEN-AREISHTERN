@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RAIDEN preference pair",
+  "type": "object",
+  "required": ["prompt", "chosen", "rejected", "category", "language", "source"],
+  "properties": {
+    "id": { "type": "string" },
+    "prompt": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "role": { "enum": ["system", "user", "assistant"] },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "chosen": { "type": "string", "minLength": 1 },
+    "rejected": { "type": "string", "minLength": 1 },
+    "category": { "type": "string" },
+    "language": { "enum": ["ru", "en", "mixed"] },
+    "source": { "enum": ["synthetic", "human", "curated", "replay"] },
+    "quality_score": { "type": "number" },
+    "contrast_type": { "type": ["string", "null"] }
+  }
+}

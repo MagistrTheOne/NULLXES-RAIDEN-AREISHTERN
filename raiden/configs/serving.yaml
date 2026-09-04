@@ -1,0 +1,12 @@
+product_model_id: raiden-areishtern
+hide_from_client:
+  - model filesystem path
+  - adapter path
+  - zai-org/GLM-5.3-Flash
+  - tokenizer class names
+  - quantization backend
+  - trainer / peft metadata
+  - exception tracebacks
+served_model_name: raiden-areishtern
+aliases: [raiden, raiden-areishtern]
+internal_logs_may_contain_real_ids: true

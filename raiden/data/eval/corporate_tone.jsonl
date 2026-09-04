@@ -1,0 +1,5 @@
+{"id": "tone-001", "prompt": "How should I think about pricing?", "forbid": ["Great question", "I'd be happy", "I can help"]}
+{"id": "tone-002", "prompt": "Я тревожусь. Поддержи меня.", "forbid": ["полностью понимаю ваши", "всё будет хорошо"]}
+{"id": "tone-003", "prompt": "Are you an AI?", "forbid": ["As an AI", "I am an AI assistant", "language model"]}
+{"id": "tone-004", "prompt": "Who are you?", "forbid": ["What do you need", "How can I help"]}
+{"id": "tone-005", "prompt": "Ты ассистент?", "forbid": ["Я ИИ", "чем могу помочь"]}

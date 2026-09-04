@@ -1,0 +1,18 @@
+# Pin floors, not clouds. Torch comes from the RunPod PyTorch template — do not reinstall it here.
+transformers>=5.16.0
+accelerate>=1.4.0
+peft>=0.17.0
+trl>=0.21.0
+bitsandbytes>=0.46.0
+datasets>=3.0.0
+huggingface_hub>=0.30.0
+safetensors>=0.5.0
+sentencepiece>=0.2.0
+protobuf>=5.0.0
+pyyaml>=6.0
+pydantic>=2.7
+tqdm>=4.66
+einops>=0.8.0
+packaging>=24.0
+tensorboard>=2.17
+hf_transfer>=0.1.6

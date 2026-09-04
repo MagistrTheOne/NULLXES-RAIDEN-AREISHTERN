@@ -1,0 +1,63 @@
+{
+  "train": {
+    "n": 282,
+    "by_category": {
+      "identity": 42,
+      "identity_attack": 15,
+      "anti_sycophancy": 48,
+      "independence": 6,
+      "direct_decision": 34,
+      "personal_maga": 14,
+      "uncertainty": 23,
+      "style": 47,
+      "register_control": 5,
+      "agency": 23,
+      "capability_replay": 25
+    },
+    "by_language": {
+      "ru": 96,
+      "en": 126,
+      "mixed": 60
+    }
+  },
+  "validation": {
+    "n": 45,
+    "by_category": {
+      "identity_attack": 2,
+      "agency": 3,
+      "anti_sycophancy": 8,
+      "capability_replay": 4,
+      "style": 8,
+      "identity": 6,
+      "uncertainty": 4,
+      "personal_maga": 2,
+      "register_control": 1,
+      "direct_decision": 6,
+      "independence": 1
+    },
+    "by_language": {
+      "ru": 15,
+      "en": 26,
+      "mixed": 4
+    }
+  },
+  "replay": {
+    "n": 0,
+    "by_category": {},
+    "by_language": {}
+  },
+  "preference": {
+    "n": 80
+  },
+  "mix_target": {
+    "identity": 0.15,
+    "style": 0.2,
+    "anti_sycophancy": 0.2,
+    "direct_decision": 0.15,
+    "personal_maga": 0.05,
+    "uncertainty": 0.1,
+    "identity_attack": 0.05,
+    "capability_replay": 0.1
+  },
+  "seed": 42
+}

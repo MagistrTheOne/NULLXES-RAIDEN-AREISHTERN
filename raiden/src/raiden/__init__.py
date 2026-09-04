@@ -1,0 +1,9 @@
+"""NULLXES RAIDEN AREISHTERN — behavioral identity post-training."""
+
+__version__ = "0.1.0"
+PRODUCT_NAME = "RAIDEN AREISHTERN"
+ORGANIZATION = "NULLXES"
+RELEASE_TARGET = "NULLXES/RAIDEN-AREISHTERN-v0.1"
+PUBLIC_MODEL_ID = "raiden-areishtern"
+BASE_MODEL_CARD = "zai-org/GLM-5.3-Flash"
+TRAINING_WEIGHTS_DEFAULT = "zai-org/GLM-5.3-Flash-BF16"

@@ -1,0 +1,10 @@
+{"id": "ret-000", "prompt": "Format tool call search q=raiden", "expected_kind": "tool"}
+{"id": "ret-001", "prompt": "def add(a,b): return a-b  — what's wrong, one line", "expected_kind": "code"}
+{"id": "ret-002", "prompt": "HTTP 401 in one sentence", "expected_kind": "fact"}
+{"id": "ret-003", "prompt": "SELECT unique emails from users", "expected_kind": "code"}
+{"id": "ret-004", "prompt": "2**10 equals?", "expected_kind": "fact"}
+{"id": "ret-005", "prompt": "Summarize 429 in RU and EN", "expected_kind": "multilingual"}
+{"id": "ret-006", "prompt": "git log last message only", "expected_kind": "code"}
+{"id": "ret-007", "prompt": "JSON keys name and ok", "expected_kind": "code"}
+{"id": "ret-008", "prompt": "Столица Франции", "expected_kind": "fact"}
+{"id": "ret-009", "prompt": "true && false in JS", "expected_kind": "fact"}

@@ -1,0 +1,130 @@
+# NULLXES RAIDEN AREISHTERN — Stage I QLoRA SFT
+# Behavioral / identity post-training. Router frozen. Vision frozen.
+# Training weights: BF16. Product base: zai-org/GLM-5.3-Flash.
+# Method: QLoRA only. No silent fallback to LoRA-bf16 / full-FT.
+
+product_model_id: raiden-areishtern
+release_target: NULLXES/RAIDEN-AREISHTERN-v0.1
+base_model: zai-org/GLM-5.3-Flash-BF16
+base_model_card: zai-org/GLM-5.3-Flash
+
+chat_template_kwargs:
+  reasoning_effort: low
+  clear_thinking: true
+
+qlora:
+  method: qlora
+  bits: 4
+  quant_type: nf4
+  double_quant: true
+  compute_dtype: bfloat16
+  quant_storage: bfloat16
+  backend: hf_qlora          # unsloth is rejected in Stage I (MoE 4-bit unsupported there)
+  require_linear_4bit: true
+  require_expert_4bit: false # packed experts are nn.Parameter; BnB cannot 4-bit them
+  packed_expert_policy: freeze_bf16
+  refuse_native_fp8: true
+  allow_fp8_dequant: false
+  skip_modules:
+    - visual
+    - lm_head
+
+lora:
+  r: 64
+  alpha: 64
+  dropout: 0.05
+  bias: none
+  task_type: CAUSAL_LM
+  target_mode: auto_stage1   # introspect named_modules(); do not assume Llama names
+  explicit_targets: []
+  modules_to_save: []
+
+freeze:
+  freeze_router: true
+  freeze_vision: true
+  freeze_packed_experts: true
+  freeze_indexer: true
+  freeze_hyper_connections: true
+  freeze_embeddings: true
+  freeze_lm_head: true
+  router_experiment:
+    enabled: false           # RAIDEN ROUTER EXPERIMENT — off in Stage I
+    train_router: false
+
+train:
+  output_dir: /workspace/checkpoints/raiden-sft-stage1
+  max_length: 4096           # 8192 is the other allowed start; not 1M
+  num_train_epochs: 1.0
+  max_steps: -1
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 1.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  logging_steps: 5
+  eval_strategy: steps
+  eval_steps: 100
+  save_strategy: steps
+  save_steps: 100            # behavioral curve: every 100 optimizer steps
+  save_total_limit: 20
+  load_best_model_at_end: false
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  bf16: true
+  fp16: false
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+  optim: paged_adamw_8bit
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  dataloader_num_workers: 2
+  dataloader_pin_memory: true
+  report_to: auto            # tensorboard + wandb if WANDB_API_KEY is set
+  run_name: raiden-sft-stage1
+  packing: false
+  assistant_only_loss: true
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false
+  distributed_strategy: device_map_auto
+  resume_from_checkpoint: auto
+  push_to_hub: false
+  hub_model_id: NULLXES/RAIDEN-AREISHTERN-v0.1
+  hub_private_repo: true
+
+dataset:
+  train_path: /workspace/datasets/raiden/train.jsonl
+  val_path: /workspace/datasets/raiden/validation.jsonl
+  preference_path: /workspace/datasets/raiden/preference.jsonl
+  target_train_size: 24000
+  target_val_size: 2000
+  replay_size: 0
+  languages: [ru, en, mixed]
+  mix:
+    identity: 0.07
+    style: 0.08
+    anti_sycophancy: 0.07
+    direct_decision: 0.06
+    personal_maga: 0.05
+    uncertainty: 0.08
+    identity_attack: 0.04
+    capability_replay: 0.07
+    agency: 0.08
+    pressure_resistance: 0.07
+    hard_judgment: 0.07
+    command_execution: 0.05
+    evidence_reversal: 0.05
+    social_boundary: 0.02
+    register_control: 0.02
+    independence: 0.06
+    banking: 0.06
+
+eval_dir: /workspace/datasets/raiden/eval
+
+preference_stage:
+  enabled: false             # DPO/ORPO after SFT baseline only — not auto-run
+  method: dpo
+  config: configs/preference_dpo.yaml
