@@ -5,6 +5,7 @@ Leaving them BF16 needs ~610 GiB. One B300 is 275 GiB, so freeze_bf16 cannot loa
 
 This is still Stage I QLoRA: LoRA on nn.Linear, experts frozen. Not LoRA-bf16.
 Forward dequantizes only the experts that actually fire (same loop as upstream).
+Frozen W still needs dL/dx = Wᵀ · dL/dy. Dequant is detached; Linear/gate stay in the graph.
 """
 
 from __future__ import annotations
@@ -219,6 +220,28 @@ def attach_packed_expert_nf4(
     return int(shape[0])
 
 
+def apply_frozen_expert(
+    hidden_states,
+    token_idx,
+    top_k_pos,
+    top_k_weights,
+    w_gu,
+    w_dn,
+    apply_gate,
+    acc,
+):
+    """Expert matmuls with constant W. Gradients flow to activations and router weights.
+
+    For y = Wx with frozen W, dL/dx = Wᵀ · dL/dy must remain in the graph.
+    Only the weight tensors are detached. Do not wrap this in torch.no_grad().
+    """
+    import torch.nn.functional as F
+
+    current = apply_gate(F.linear(hidden_states[token_idx], w_gu.detach()))
+    current = F.linear(current, w_dn.detach()) * top_k_weights[token_idx, top_k_pos, None]
+    return acc.index_add(0, token_idx, current.to(dtype=acc.dtype))
+
+
 def _nf4_forward(self, hidden_states, top_k_index, top_k_weights):
     import torch
     import torch.nn.functional as F
@@ -226,23 +249,30 @@ def _nf4_forward(self, hidden_states, top_k_index, top_k_weights):
     store = getattr(self, "_raiden_nf4", None)
     if not store or "gate_up_proj" not in store or "down_proj" not in store:
         return self._raiden_orig_expert_forward(hidden_states, top_k_index, top_k_weights)
-    final = torch.zeros_like(hidden_states)
+    acc = hidden_states.new_zeros(hidden_states.shape)
     dtype = hidden_states.dtype
-    with torch.no_grad():
-        mask = F.one_hot(top_k_index, num_classes=self.num_experts).permute(2, 1, 0)
-        hit = torch.greater(mask.sum(dim=(-1, -2)), 0).nonzero()
-        for expert_idx in hit:
-            expert_idx = expert_idx[0]
-            if expert_idx == self.num_experts:
-                continue
-            top_k_pos, token_idx = torch.where(mask[expert_idx])
-            i = int(expert_idx.item())
+    mask = F.one_hot(top_k_index, num_classes=self.num_experts).permute(2, 1, 0)
+    hit = torch.greater(mask.sum(dim=(-1, -2)), 0).nonzero()
+    for expert_idx in hit:
+        expert_idx = expert_idx[0]
+        if expert_idx == self.num_experts:
+            continue
+        top_k_pos, token_idx = torch.where(mask[expert_idx])
+        i = int(expert_idx.item())
+        with torch.no_grad():
             w_gu = _dequantize_matrix(*store["gate_up_proj"][i], dtype)
             w_dn = _dequantize_matrix(*store["down_proj"][i], dtype)
-            current = self._apply_gate(F.linear(hidden_states[token_idx], w_gu))
-            current = F.linear(current, w_dn) * top_k_weights[token_idx, top_k_pos, None]
-            final.index_add_(0, token_idx, current.to(final.dtype))
-    return final
+        acc = apply_frozen_expert(
+            hidden_states,
+            token_idx,
+            top_k_pos,
+            top_k_weights,
+            w_gu,
+            w_dn,
+            self._apply_gate,
+            acc,
+        )
+    return acc
 
 
 def install_expert_nf4_forward() -> None:

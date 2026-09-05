@@ -160,7 +160,8 @@ Preference / DPO stays off.
 | `9d44c21` | packed-expert NF4 freeze + load hooks |
 | `c943729` | batched NF4 — **do not use**, int32 abort |
 | `d0f9908` | `via=chunk119` / `chunk238` (safe launch) |
-| this tree | disk cache + `materialize_experts` + skip BF16 reads |
+| `713bfb4` | disk cache + `materialize_experts` + skip BF16 reads |
+| this tree | frozen expert `W` stays detached; `dL/dx` through experts is live |
 
 ## Secrets
 

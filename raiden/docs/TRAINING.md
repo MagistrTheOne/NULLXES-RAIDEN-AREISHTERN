@@ -34,6 +34,8 @@ Config: `configs/raiden_qlora.yaml`. Preference / DPO config exists and is **dis
 
 On one B300, do **not** NF4 packed experts inside every `from_pretrained`. Materialize `/workspace/cache/expert_nf4` once (`python -m raiden.materialize_experts`). Train then loads `via=cache` and skips those BF16 shard reads. See [RUNBOOK.md](RUNBOOK.md).
 
+Frozen expert **weights** are not a stop-gradient on activations. `y = Wx` with frozen `W` still needs `dL/dx = Wᵀ · dL/dy` so LoRA on earlier Linears can train. Dequant is detached; the expert Linear/gate path stays in the autograd graph. Wrapping the whole expert forward in `torch.no_grad()` is incorrect.
+
 ## Dataset mix — RAIDEN HARD PRIOR
 
 Not `helpfulness − politeness − sycophancy`. Axes: agency, dominance, judgment, pressure resistance, epistemic discipline.

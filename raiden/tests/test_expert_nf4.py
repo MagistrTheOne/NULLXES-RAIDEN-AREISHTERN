@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from raiden.expert_nf4 import (
     VRAM_BF16_EXPERTS_MIN_BYTES,
+    apply_frozen_expert,
     count_nf4_expert_modules,
     nf4_expert_chunk_size,
     resolve_packed_expert_policy,
@@ -81,6 +82,49 @@ def test_resolve_cached_key_prefix(tmp_path):
     assert resolve_cached_key(tmp_path, key) == key
     assert resolve_cached_key(tmp_path, key.removeprefix("model.")) == key
     assert resolve_cached_key(tmp_path, "nope.experts.gate_up_proj") is None
+
+
+def _swiglu(t):
+    import torch.nn.functional as F
+
+    a, b = t.chunk(2, dim=-1)
+    return F.silu(a) * b
+
+
+def test_frozen_expert_backs_into_activations():
+    import torch
+
+    torch.manual_seed(0)
+    x = torch.randn(5, 8, requires_grad=True)
+    w_gu = torch.randn(16, 8)
+    w_dn = torch.randn(8, 8)
+    token_idx = torch.tensor([0, 2, 4])
+    top_k_pos = torch.zeros(3, dtype=torch.long)
+    router_w = torch.ones(5, 1)
+    acc = torch.zeros_like(x)
+    y = apply_frozen_expert(x, token_idx, top_k_pos, router_w, w_gu, w_dn, _swiglu, acc)
+    y.sum().backward()
+    assert x.grad is not None
+    assert x.grad[0].abs().sum() > 0
+    assert x.grad[2].abs().sum() > 0
+    assert w_gu.grad is None
+    assert w_dn.grad is None
+
+
+def test_no_grad_around_expert_math_kills_input_grad():
+    import torch
+
+    torch.manual_seed(0)
+    x = torch.randn(5, 8, requires_grad=True)
+    w_gu = torch.randn(16, 8)
+    w_dn = torch.randn(8, 8)
+    token_idx = torch.tensor([0, 2, 4])
+    top_k_pos = torch.zeros(3, dtype=torch.long)
+    router_w = torch.ones(5, 1)
+    acc = torch.zeros_like(x)
+    with torch.no_grad():
+        y = apply_frozen_expert(x, token_idx, top_k_pos, router_w, w_gu, w_dn, _swiglu, acc)
+    assert y.requires_grad is False
 
 
 def test_count_nf4_expert_modules():
