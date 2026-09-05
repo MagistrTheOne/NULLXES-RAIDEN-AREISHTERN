@@ -34,6 +34,14 @@ def test_resolve_upgrades_freeze_bf16_on_small_gpu(monkeypatch):
     assert VRAM_BF16_EXPERTS_MIN_BYTES > 275 * 1024**3
 
 
+def test_split_packed_nf4_layout_sizes():
+    n_exp, out, inn, blocksize = 4, 64, 128, 64
+    n_el = out * inn
+    assert n_el % blocksize == 0
+    assert n_el // 2 * n_exp == n_exp * n_el // 2
+    assert n_el // blocksize * n_exp == n_exp * (out * inn // blocksize)
+
+
 def test_count_nf4_expert_modules():
     ready = SimpleNamespace(
         _raiden_nf4={"gate_up_proj": [None], "down_proj": [None]},

@@ -72,8 +72,52 @@ def _dequantize_matrix(q, qs, dtype):
     return Fbnb.dequantize_4bit(q, qs).to(dtype=dtype)
 
 
+def _absmax_float(qs):
+    import bitsandbytes.functional as Fbnb
+
+    if getattr(qs, "nested", False) and qs.state2 is not None:
+        absmax = Fbnb.dequantize_blockwise(qs.absmax, qs.state2)
+        if qs.offset is not None:
+            absmax = absmax + qs.offset
+        return absmax.float()
+    return qs.absmax.float()
+
+
+def _split_packed_nf4(q, qs, n_exp: int, out: int, inn: int):
+    """Turn one NF4 packed [E, out*in] quant into per-expert (q, QuantState) views."""
+    import torch
+    from bitsandbytes.functional import QuantState
+
+    n_el = out * inn
+    blocksize = int(qs.blocksize)
+    if n_el % blocksize != 0:
+        raise ValueError(f"expert matrix {out}x{inn} is not divisible by NF4 blocksize {blocksize}")
+    blocks = n_el // blocksize
+    q_per = n_el // 2
+    q_flat = q.reshape(-1)
+    absmax = _absmax_float(qs).reshape(-1)
+    if int(q_flat.numel()) != n_exp * q_per or int(absmax.numel()) != n_exp * blocks:
+        raise ValueError(
+            f"NF4 layout mismatch q={int(q_flat.numel())} absmax={int(absmax.numel())} "
+            f"expected q={n_exp * q_per} absmax={n_exp * blocks}"
+        )
+    rows = []
+    for i in range(n_exp):
+        qs_i = QuantState(
+            absmax=absmax[i * blocks : (i + 1) * blocks],
+            shape=torch.Size((out, inn)),
+            code=qs.code,
+            blocksize=blocksize,
+            quant_type=qs.quant_type,
+            dtype=qs.dtype,
+        )
+        rows.append((q_flat[i * q_per : (i + 1) * q_per], qs_i))
+    return rows
+
+
 def attach_packed_expert_nf4(module: Any, param_name: str, value) -> int:
     """Quantize a packed [E, out, in] tensor into per-expert NF4 rows. Returns E."""
+    import bitsandbytes.functional as Fbnb
     import torch
 
     if param_name not in EXPERT_PARAM_NAMES:
@@ -83,11 +127,17 @@ def attach_packed_expert_nf4(module: Any, param_name: str, value) -> int:
     w = value.detach()
     if w.ndim != 3:
         raise ValueError(f"expected packed 3D expert tensor, got {tuple(w.shape)}")
-    n_exp, _out, _inn = (int(x) for x in w.shape)
-    rows = []
-    for i in range(n_exp):
-        rows.append(_quantize_matrix(w[i]))
-    del w
+    n_exp, out, inn = (int(x) for x in w.shape)
+    w2 = w.to(device="cuda", dtype=torch.bfloat16).contiguous().reshape(n_exp, out * inn)
+    try:
+        q, qs = Fbnb.quantize_4bit(w2, quant_type="nf4", compress_statistics=True)
+        rows = _split_packed_nf4(q, qs, n_exp, out, inn)
+        how = "batched"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("batched NF4 split failed (%s); per-expert fallback", exc)
+        rows = [_quantize_matrix(w2[i].reshape(out, inn)) for i in range(n_exp)]
+        how = "per-expert"
+    del w, w2
     store = getattr(module, "_raiden_nf4", None)
     if store is None:
         store = {}
@@ -95,12 +145,13 @@ def attach_packed_expert_nf4(module: Any, param_name: str, value) -> int:
     store[param_name] = rows
     if not hasattr(module, "_raiden_nf4_shape"):
         module._raiden_nf4_shape = {}
-    module._raiden_nf4_shape[param_name] = (n_exp, int(value.shape[1]), int(value.shape[2]))
+    module._raiden_nf4_shape[param_name] = (n_exp, out, inn)
     logger.info(
-        "NF4 packed expert %s experts=%s shape=%s",
+        "NF4 packed expert %s experts=%s shape=%s via=%s",
         param_name,
         n_exp,
-        tuple(int(x) for x in value.shape),
+        (n_exp, out, inn),
+        how,
     )
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
