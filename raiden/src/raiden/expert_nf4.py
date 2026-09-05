@@ -13,6 +13,15 @@ import logging
 from contextlib import contextmanager
 from typing import Any
 
+from raiden.expert_nf4_cache import (
+    apply_rows_to_module,
+    expert_nf4_cache_dir,
+    load_expert_blob,
+    peek_cached_shape,
+    resolve_cached_key,
+    save_expert_blob,
+)
+
 logger = logging.getLogger("raiden")
 
 EXPERT_PARAM_NAMES = frozenset({"gate_up_proj", "down_proj"})
@@ -123,25 +132,24 @@ def nf4_expert_chunk_size(n_exp: int, out: int, inn: int) -> int:
     return max(1, min(n_exp, _NF4_MAX_ELEMENTS // per))
 
 
-def attach_packed_expert_nf4(module: Any, param_name: str, value) -> int:
-    """Quantize a packed [E, out, in] tensor into per-expert NF4 rows. Returns E."""
+def quantize_packed_expert_tensor(value, log_name: str = "") -> tuple[list, tuple[int, int, int]]:
+    """NF4 a packed [E, out, in] tensor. Uploads int32-safe chunks, never the full 4.8e9 elems."""
     import bitsandbytes.functional as Fbnb
     import torch
 
-    if param_name not in EXPERT_PARAM_NAMES:
-        raise ValueError(param_name)
     if value is None:
         raise ValueError("expert tensor is None")
     w = value.detach()
     if w.ndim != 3:
         raise ValueError(f"expected packed 3D expert tensor, got {tuple(w.shape)}")
     n_exp, out, inn = (int(x) for x in w.shape)
-    w = w.to(device="cuda", dtype=torch.bfloat16).contiguous()
     chunk = nf4_expert_chunk_size(n_exp, out, inn)
     rows: list = []
-    for start in range(0, n_exp, chunk):
+    n_chunks = (n_exp + chunk - 1) // chunk
+    for i, start in enumerate(range(0, n_exp, chunk)):
         sl = w[start : start + chunk]
         n = int(sl.shape[0])
+        sl = sl.to(device="cuda", dtype=torch.bfloat16).contiguous()
         q, qs = Fbnb.quantize_4bit(
             sl.reshape(n * out, inn).contiguous(),
             quant_type="nf4",
@@ -149,26 +157,66 @@ def attach_packed_expert_nf4(module: Any, param_name: str, value) -> int:
         )
         rows.extend(_split_packed_nf4(q, qs, n, out, inn))
         del q, qs, sl
-    how = f"chunk{chunk}"
+        logger.info(
+            "NF4 %s chunk %s/%s experts %s-%s/%s via=chunk%s",
+            log_name or "packed",
+            i + 1,
+            n_chunks,
+            start,
+            start + n,
+            n_exp,
+            chunk,
+        )
     del w
-    store = getattr(module, "_raiden_nf4", None)
-    if store is None:
-        store = {}
-        module._raiden_nf4 = store
-    store[param_name] = rows
-    if not hasattr(module, "_raiden_nf4_shape"):
-        module._raiden_nf4_shape = {}
-    module._raiden_nf4_shape[param_name] = (n_exp, out, inn)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return rows, (n_exp, out, inn)
+
+
+def attach_packed_expert_nf4(
+    module: Any,
+    param_name: str,
+    value,
+    weight_name: str | None = None,
+) -> int:
+    """Attach per-expert NF4 rows from cache or by quantizing `value`. Returns E."""
+    import torch
+
+    if param_name not in EXPERT_PARAM_NAMES:
+        raise ValueError(param_name)
+    cache_dir = expert_nf4_cache_dir()
+    key = weight_name or param_name
+    cached = resolve_cached_key(cache_dir, weight_name) if cache_dir is not None and weight_name else None
+    if cached:
+        rows, shape = load_expert_blob(cache_dir, cached, device="cuda")
+        apply_rows_to_module(module, param_name, rows, shape)
+        logger.info(
+            "NF4 packed expert %s experts=%s shape=%s via=cache",
+            key,
+            shape[0],
+            shape,
+        )
+        return int(shape[0])
+    if value is None:
+        raise ValueError(f"expert tensor is None and cache miss for {key}")
+    if hasattr(value, "is_meta") and value.is_meta:
+        raise ValueError(f"expert tensor is meta and cache miss for {key}")
+    rows, shape = quantize_packed_expert_tensor(value, log_name=key)
+    apply_rows_to_module(module, param_name, rows, shape)
+    how = f"chunk{nf4_expert_chunk_size(*shape)}"
+    if cache_dir is not None and weight_name:
+        save_expert_blob(cache_dir, weight_name, rows, shape)
+        how = f"{how}+write"
     logger.info(
         "NF4 packed expert %s experts=%s shape=%s via=%s",
-        param_name,
-        n_exp,
-        (n_exp, out, inn),
+        key,
+        shape[0],
+        shape,
         how,
     )
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    return n_exp
+    return int(shape[0])
 
 
 def _nf4_forward(self, hidden_states, top_k_index, top_k_weights):
@@ -222,12 +270,116 @@ def count_nf4_expert_modules(model: Any) -> int:
 def _dummy_param(like):
     import torch
 
-    device = getattr(like, "device", None)
+    device = getattr(like, "device", None) if like is not None else None
     if device is None or (hasattr(device, "type") and device.type == "meta"):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     p = torch.nn.Parameter(torch.empty(0, device=device), requires_grad=False)
     p._is_hf_initialized = True
     return p
+
+
+def attach_cached_experts_on_model(model: Any, cache_dir=None) -> int:
+    """Fill any packed-expert module still missing NF4 rows from the disk cache."""
+    cache_dir = expert_nf4_cache_dir(cache_dir)
+    if cache_dir is None:
+        return 0
+    n = 0
+    for name, mod in model.named_modules():
+        if not _module_is_packed_experts(mod):
+            continue
+        store = getattr(mod, "_raiden_nf4", None) or {}
+        for pname in EXPERT_PARAM_NAMES:
+            if pname in store:
+                continue
+            key = f"{name}.{pname}"
+            cached = resolve_cached_key(cache_dir, key)
+            if not cached:
+                continue
+            rows, shape = load_expert_blob(cache_dir, cached, device="cuda")
+            apply_rows_to_module(mod, pname, rows, shape)
+            n += 1
+            logger.info("NF4 packed expert %s experts=%s shape=%s via=cache-post", key, shape[0], shape)
+    return n
+
+
+@contextmanager
+def skip_cached_expert_reads(cache_dir=None):
+    """Stop Hugging Face from reading BF16 packed experts that are already NF4 on disk.
+
+    Returns a meta tensor of the cached shape so assignment hooks still fire.
+    """
+    cache_dir = expert_nf4_cache_dir(cache_dir)
+    if cache_dir is None:
+        yield
+        return
+
+    import torch
+
+    patches: list[tuple[Any, str, Any]] = []
+
+    class _Handle:
+        def __init__(self, inner):
+            object.__setattr__(self, "_inner", inner)
+
+        def __enter__(self):
+            inner = self._inner
+            entered = inner.__enter__() if hasattr(inner, "__enter__") else inner
+            object.__setattr__(self, "_inner", entered)
+            return self
+
+        def __exit__(self, *exc):
+            inner = self._inner
+            if hasattr(inner, "__exit__"):
+                return inner.__exit__(*exc)
+            return None
+
+        def get_tensor(self, name):
+            cached = resolve_cached_key(cache_dir, name)
+            if cached:
+                shape = peek_cached_shape(cache_dir, cached)
+                if shape is None:
+                    shape = (0,)
+                logger.info("skip BF16 read %s (cache hit, meta %s)", name, shape)
+                return torch.empty(shape, dtype=torch.bfloat16, device="meta")
+            return self._inner.get_tensor(name)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    def _wrap(orig):
+        def safe_open(*args, **kwargs):
+            return _Handle(orig(*args, **kwargs))
+
+        return safe_open
+
+    import importlib
+
+    candidates = [
+        "safetensors",
+        "safetensors.torch",
+        "transformers.core_model_loading",
+        "transformers.modeling_utils",
+        "transformers.integrations.hub_kernels",
+    ]
+    for mod_name in candidates:
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception:
+            continue
+        orig = getattr(mod, "safe_open", None)
+        if orig is None or getattr(orig, "_raiden_nf4_skip", False):
+            continue
+        wrapped = _wrap(orig)
+        wrapped._raiden_nf4_skip = True
+        setattr(mod, "safe_open", wrapped)
+        patches.append((mod, "safe_open", orig))
+    if not patches:
+        logger.warning("could not wrap safetensors.safe_open; cached experts will still be read as BF16")
+    try:
+        yield
+    finally:
+        for mod, name, orig in patches:
+            setattr(mod, name, orig)
 
 
 @contextmanager
@@ -252,8 +404,10 @@ def expert_nf4_load_hooks():
             module_path, _, param_name = target_name.rpartition(".")
             if param_name in EXPERT_PARAM_NAMES:
                 module_obj = model.get_submodule(module_path) if module_path else model
-                if _module_is_packed_experts(module_obj) and param_value is not None:
-                    attach_packed_expert_nf4(module_obj, param_name, param_value)
+                cache_dir = expert_nf4_cache_dir()
+                cached = resolve_cached_key(cache_dir, target_name) if cache_dir else None
+                if _module_is_packed_experts(module_obj) and (param_value is not None or cached):
+                    attach_packed_expert_nf4(module_obj, param_name, param_value, weight_name=target_name)
                     return orig_set(model, target_name, _dummy_param(param_value), loading_info, hf_quantizer)
             return orig_set(model, target_name, param_value, loading_info, hf_quantizer)
 
@@ -274,7 +428,7 @@ def expert_nf4_load_hooks():
                 and leaf in EXPERT_PARAM_NAMES
                 and value is not None
             ):
-                attach_packed_expert_nf4(module, leaf, value)
+                attach_packed_expert_nf4(module, leaf, value, weight_name=None)
                 return orig_acc(module, tensor_name, device, value=_dummy_param(value), **kwargs)
             return orig_acc(module, tensor_name, device, value=value, **kwargs)
 

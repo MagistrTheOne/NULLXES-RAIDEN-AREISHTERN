@@ -2,7 +2,9 @@
 
 Stage I trains on **RunPod** with a persistent volume. Compute is ephemeral. Artifacts are not.
 
-Public product overview stays in the [README](../README.md). This page is operator procedure.
+Public product overview stays in the [README](../README.md). This page is first-boot. Live B300 procedure, paid artifacts, and the expert-NF4 cache: [RUNBOOK.md](RUNBOOK.md).
+
+Do not run `train_raiden.sh` / `train_detached.sh` on the current dataset: val is hard_judgment-only and the mix check will abort. Do not re-download the BF16 dump or regenerate JSONL.
 
 ## Layout
 

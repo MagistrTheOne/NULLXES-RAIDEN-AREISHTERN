@@ -12,6 +12,12 @@ from raiden.expert_nf4 import (
     nf4_expert_chunk_size,
     resolve_packed_expert_policy,
 )
+from raiden.expert_nf4_cache import (
+    cache_file_for_key,
+    is_packed_expert_weight_key,
+    resolve_cached_key,
+    save_manifest,
+)
 from raiden.config import RaidenConfig
 
 
@@ -50,6 +56,31 @@ def test_split_packed_nf4_layout_sizes():
     assert n_el % blocksize == 0
     assert n_el // 2 * n_exp == n_exp * n_el // 2
     assert n_el // blocksize * n_exp == n_exp * (out * inn // blocksize)
+
+
+def test_packed_expert_key_skips_shared():
+    assert is_packed_expert_weight_key(
+        "model.language_model.layers.3.mlp.experts.gate_up_proj"
+    )
+    assert is_packed_expert_weight_key(
+        "model.language_model.layers.3.mlp.experts.down_proj"
+    )
+    assert not is_packed_expert_weight_key(
+        "model.language_model.layers.3.mlp.shared_experts.gate_up_proj"
+    )
+    assert not is_packed_expert_weight_key("model.language_model.layers.3.mlp.gate_proj")
+
+
+def test_resolve_cached_key_prefix(tmp_path):
+    key = "model.language_model.layers.3.mlp.experts.gate_up_proj"
+    cache_file_for_key(tmp_path, key).write_bytes(b"x")
+    save_manifest(
+        tmp_path,
+        {"v": 1, "tensors": {key: {"shape": [288, 4096, 4096], "file": f"{key}.pt"}}},
+    )
+    assert resolve_cached_key(tmp_path, key) == key
+    assert resolve_cached_key(tmp_path, key.removeprefix("model.")) == key
+    assert resolve_cached_key(tmp_path, "nope.experts.gate_up_proj") is None
 
 
 def test_count_nf4_expert_modules():

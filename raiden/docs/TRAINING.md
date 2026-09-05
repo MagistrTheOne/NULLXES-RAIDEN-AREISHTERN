@@ -5,6 +5,7 @@ Stage I is **behavioral / identity post-training** with **QLoRA only**.
 It does not rebuild coding, math, tools, or world knowledge. It does not fine-tune the MoE router.
 
 Operator commands: [RUNPOD.md](RUNPOD.md).  
+Live B300 load/cache: [RUNBOOK.md](RUNBOOK.md).  
 Behavior target: [IDENTITY.md](IDENTITY.md).
 
 ## Method
@@ -30,6 +31,8 @@ Config: `configs/raiden_qlora.yaml`. Preference / DPO config exists and is **dis
 | Linear attention + dense/shared MLP | LoRA |
 
 `router_experiment.enabled` is false. Enabling it is a later research run, not the baseline.
+
+On one B300, do **not** NF4 packed experts inside every `from_pretrained`. Materialize `/workspace/cache/expert_nf4` once (`python -m raiden.materialize_experts`). Train then loads `via=cache` and skips those BF16 shard reads. See [RUNBOOK.md](RUNBOOK.md).
 
 ## Dataset mix — RAIDEN HARD PRIOR
 

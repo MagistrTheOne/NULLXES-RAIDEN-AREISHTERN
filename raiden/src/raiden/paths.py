@@ -43,6 +43,10 @@ def cache_dir() -> Path:
     return _env_path("RAIDEN_CACHE", str(workspace_root() / "cache"))
 
 
+def expert_nf4_cache_dir() -> Path:
+    return _env_path("RAIDEN_EXPERT_NF4_CACHE", str(cache_dir() / "expert_nf4"))
+
+
 def hf_home() -> Path:
     return _env_path("HF_HOME", str(cache_dir() / "huggingface"))
 

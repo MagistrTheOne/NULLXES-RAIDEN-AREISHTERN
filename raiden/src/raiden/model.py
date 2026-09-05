@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -11,11 +12,14 @@ from transformers import AutoConfig, AutoProcessor, AutoTokenizer, BitsAndBytesC
 
 from raiden.compatibility import RaidenCompatibilityError, assert_qlora_ready
 from raiden.expert_nf4 import (
+    attach_cached_experts_on_model,
     count_nf4_expert_modules,
     expert_nf4_load_hooks,
     install_expert_nf4_forward,
     resolve_packed_expert_policy,
+    skip_cached_expert_reads,
 )
+from raiden.expert_nf4_cache import cache_is_complete, expert_nf4_cache_dir
 from raiden.freeze import apply_freeze, assert_router_frozen
 from raiden.lora import census_from_model, dump_census_json, peft_lora_config, plan_stage1_lora
 
@@ -158,8 +162,15 @@ def load_quantized_base(cfg):
     try:
         if expert_policy == "nf4_freeze":
             install_expert_nf4_forward()
-            with expert_nf4_load_hooks():
+            cache_dir = expert_nf4_cache_dir()
+            if cache_dir is not None and cache_is_complete(Path(cfg.base_model), cache_dir):
+                logger.info(
+                    "packed-expert NF4 cache complete at %s — skipping BF16 expert reads",
+                    cache_dir,
+                )
+            with skip_cached_expert_reads(cache_dir), expert_nf4_load_hooks():
                 model = auto_cls.from_pretrained(cfg.base_model, **model_kwargs)
+            attach_cached_experts_on_model(model, cache_dir)
             n_nf4 = count_nf4_expert_modules(model)
             if n_nf4 == 0:
                 raise RaidenCompatibilityError(

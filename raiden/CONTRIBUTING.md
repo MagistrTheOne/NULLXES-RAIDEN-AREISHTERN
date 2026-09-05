@@ -23,6 +23,7 @@ PYTHONPATH=src pytest -q
 | QLoRA / data | [docs/TRAINING.md](docs/TRAINING.md) |
 | Eval | [docs/EVALUATION.md](docs/EVALUATION.md) |
 | Pod commands | [docs/RUNPOD.md](docs/RUNPOD.md) |
+| B300 live runbook | [docs/RUNBOOK.md](docs/RUNBOOK.md) |
 
 ## Dataset regenerate
 
