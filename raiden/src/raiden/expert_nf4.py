@@ -18,6 +18,8 @@ logger = logging.getLogger("raiden")
 EXPERT_PARAM_NAMES = frozenset({"gate_up_proj", "down_proj"})
 EXPERT_CLASS_NAME = "Glm5NextTextExperts"
 VRAM_BF16_EXPERTS_MIN_BYTES = 400 * 1024**3  # below this, freeze_bf16 cannot fit
+# bitsandbytes CUDA kernels take int32 element counts. 288*4096*4096 = 4.83e9 > 2^31-1.
+_NF4_MAX_ELEMENTS = 2_000_000_000
 
 
 def gpu_vram_bytes() -> int | None:
@@ -115,6 +117,12 @@ def _split_packed_nf4(q, qs, n_exp: int, out: int, inn: int):
     return rows
 
 
+def nf4_expert_chunk_size(n_exp: int, out: int, inn: int) -> int:
+    """Largest expert batch whose BF16 numel fits in a signed int32 CUDA launch."""
+    per = max(1, out * inn)
+    return max(1, min(n_exp, _NF4_MAX_ELEMENTS // per))
+
+
 def attach_packed_expert_nf4(module: Any, param_name: str, value) -> int:
     """Quantize a packed [E, out, in] tensor into per-expert NF4 rows. Returns E."""
     import bitsandbytes.functional as Fbnb
@@ -128,16 +136,21 @@ def attach_packed_expert_nf4(module: Any, param_name: str, value) -> int:
     if w.ndim != 3:
         raise ValueError(f"expected packed 3D expert tensor, got {tuple(w.shape)}")
     n_exp, out, inn = (int(x) for x in w.shape)
-    w2 = w.to(device="cuda", dtype=torch.bfloat16).contiguous().reshape(n_exp, out * inn)
-    try:
-        q, qs = Fbnb.quantize_4bit(w2, quant_type="nf4", compress_statistics=True)
-        rows = _split_packed_nf4(q, qs, n_exp, out, inn)
-        how = "batched"
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("batched NF4 split failed (%s); per-expert fallback", exc)
-        rows = [_quantize_matrix(w2[i].reshape(out, inn)) for i in range(n_exp)]
-        how = "per-expert"
-    del w, w2
+    w = w.to(device="cuda", dtype=torch.bfloat16).contiguous()
+    chunk = nf4_expert_chunk_size(n_exp, out, inn)
+    rows: list = []
+    for start in range(0, n_exp, chunk):
+        sl = w[start : start + chunk]
+        n = int(sl.shape[0])
+        q, qs = Fbnb.quantize_4bit(
+            sl.reshape(n * out, inn).contiguous(),
+            quant_type="nf4",
+            compress_statistics=True,
+        )
+        rows.extend(_split_packed_nf4(q, qs, n, out, inn))
+        del q, qs, sl
+    how = f"chunk{chunk}"
+    del w
     store = getattr(module, "_raiden_nf4", None)
     if store is None:
         store = {}

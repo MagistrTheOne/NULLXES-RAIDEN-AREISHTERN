@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from raiden.expert_nf4 import (
     VRAM_BF16_EXPERTS_MIN_BYTES,
     count_nf4_expert_modules,
+    nf4_expert_chunk_size,
     resolve_packed_expert_policy,
 )
 from raiden.config import RaidenConfig
@@ -32,6 +33,15 @@ def test_resolve_upgrades_freeze_bf16_on_small_gpu(monkeypatch):
     monkeypatch.setattr(m, "gpu_vram_bytes", lambda: 800 * 1024**3)
     assert resolve_packed_expert_policy("freeze_bf16") == "freeze_bf16"
     assert VRAM_BF16_EXPERTS_MIN_BYTES > 275 * 1024**3
+
+
+def test_nf4_chunk_stays_under_int32():
+    gate = nf4_expert_chunk_size(288, 4096, 4096)
+    down = nf4_expert_chunk_size(288, 4096, 2048)
+    assert 1 <= gate <= 288
+    assert 1 <= down <= 288
+    assert gate * 4096 * 4096 < 2**31
+    assert down * 4096 * 2048 < 2**31
 
 
 def test_split_packed_nf4_layout_sizes():
