@@ -96,8 +96,8 @@ def test_frozen_expert_backs_into_activations():
 
     torch.manual_seed(0)
     x = torch.randn(5, 8, requires_grad=True)
-    w_gu = torch.randn(16, 8)
-    w_dn = torch.randn(8, 8)
+    w_gu = torch.randn(16, 8, requires_grad=True)
+    w_dn = torch.randn(8, 8, requires_grad=True)
     token_idx = torch.tensor([0, 2, 4])
     top_k_pos = torch.zeros(3, dtype=torch.long)
     router_w = torch.ones(5, 1)
