@@ -302,24 +302,23 @@ def check_environment(
         "storage": "nn.Parameter (gate_up_proj, down_proj), NOT nn.Linear",
         "bnb_linear4bit_applies": False,
         "peft_lora_on_parameter": False,
-        "stage1_policy": "freeze packed experts; QLoRA nn.Linear only",
+        "stage1_policy": "QLoRA nn.Linear + frozen packed experts (NF4 on single-B300)",
     }
     report.warnings.append(
         "GLM-5.3-Flash MoE experts are packed nn.Parameter tensors. "
         "bitsandbytes Linear4bit and PEFT LoRA target nn.Linear only. "
-        "Stage I QLoRA therefore quantizes + adapts Linear modules "
+        "Stage I QLoRA quantizes + adapts Linear modules "
         "(attention, dense MLP, shared expert) and FREEZES packed experts. "
-        "This is still QLoRA, not a method switch. "
-        "Unsloth independently documents that MoE 4-bit QLoRA is not supported "
-        "for packed expert Parameters."
+        "On a single B300, experts are stored NF4 (packed_expert_policy=nf4_freeze) "
+        "because BF16 packed experts (~610 GiB) do not fit 275 GiB. "
+        "This is still QLoRA, not a method switch."
     )
     if require_expert_4bit:
         report.errors.append(
-            "qlora.require_expert_4bit=true, but bitsandbytes cannot 4-bit-quantize "
-            "Glm5Next packed expert Parameters. Unsloth documents the same gap. "
-            "Refusing to start rather than silently drop expert quantization "
-            "or switch to LoRA-bf16. Set require_expert_4bit=false to proceed with "
-            "Linear-only QLoRA + frozen packed experts (Stage I design)."
+            "qlora.require_expert_4bit=true means BnB Linear4bit on packed experts, "
+            "which cannot exist (they are nn.Parameter). "
+            "Use packed_expert_policy=nf4_freeze instead: frozen NF4 Parameters, "
+            "LoRA still Linear-only. Set require_expert_4bit=false."
         )
 
     if require_linear_4bit:

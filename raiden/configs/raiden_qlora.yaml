@@ -21,8 +21,8 @@ qlora:
   quant_storage: bfloat16
   backend: hf_qlora          # unsloth is rejected in Stage I (MoE 4-bit unsupported there)
   require_linear_4bit: true
-  require_expert_4bit: false # packed experts are nn.Parameter; BnB cannot 4-bit them
-  packed_expert_policy: freeze_bf16
+  require_expert_4bit: false # Linear4bit still cannot wrap packed Parameters
+  packed_expert_policy: nf4_freeze  # freeze_bf16 needs ~610 GiB; one B300 is 275 GiB
   refuse_native_fp8: true
   allow_fp8_dequant: false
   skip_modules:

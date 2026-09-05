@@ -29,7 +29,7 @@ class QLoRAConfig:
     backend: str = "hf_qlora"  # hf_qlora | unsloth
     require_linear_4bit: bool = True
     require_expert_4bit: bool = False
-    packed_expert_policy: str = "freeze_bf16"
+    packed_expert_policy: str = "nf4_freeze"
     refuse_native_fp8: bool = True
     allow_fp8_dequant: bool = False
     skip_modules: tuple[str, ...] = ("visual", "lm_head")
@@ -170,7 +170,7 @@ class RaidenConfig:
             backend=q.get("backend", "hf_qlora"),
             require_linear_4bit=bool(q.get("require_linear_4bit", True)),
             require_expert_4bit=bool(q.get("require_expert_4bit", False)),
-            packed_expert_policy=q.get("packed_expert_policy", "freeze_bf16"),
+            packed_expert_policy=q.get("packed_expert_policy", "nf4_freeze"),
             refuse_native_fp8=bool(q.get("refuse_native_fp8", True)),
             allow_fp8_dequant=bool(q.get("allow_fp8_dequant", False)),
             skip_modules=tuple(q.get("skip_modules", ["visual", "lm_head"])),

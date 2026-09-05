@@ -10,6 +10,12 @@ import torch
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer, BitsAndBytesConfig
 
 from raiden.compatibility import RaidenCompatibilityError, assert_qlora_ready
+from raiden.expert_nf4 import (
+    count_nf4_expert_modules,
+    expert_nf4_load_hooks,
+    install_expert_nf4_forward,
+    resolve_packed_expert_policy,
+)
 from raiden.freeze import apply_freeze, assert_router_frozen
 from raiden.lora import census_from_model, dump_census_json, peft_lora_config, plan_stage1_lora
 
@@ -109,11 +115,26 @@ def load_quantized_base(cfg):
     token = os.environ.get("HF_TOKEN")
     bnb = build_bnb_config(cfg.qlora)
     auto_cls = _resolve_causal_class()
-    logger.info("loading %s via %s + BitsAndBytes 4-bit NF4", cfg.base_model, auto_cls.__name__)
+    expert_policy = resolve_packed_expert_policy(cfg.qlora.packed_expert_policy)
+    logger.info(
+        "loading %s via %s + BitsAndBytes 4-bit NF4 (packed_expert_policy=%s)",
+        cfg.base_model,
+        auto_cls.__name__,
+        expert_policy,
+    )
+
+    # device_map="auto" sees BF16 packed experts (~610 GiB) and offloads to CPU.
+    # BnB then aborts. nf4_freeze forces GPU 0; the load hook NF4s experts on assign.
+    if expert_policy == "nf4_freeze":
+        device_map: Any = {"": 0}
+    elif cfg.train.distributed_strategy == "device_map_auto":
+        device_map = "auto"
+    else:
+        device_map = None
 
     model_kwargs: dict[str, Any] = dict(
         quantization_config=bnb,
-        device_map="auto" if cfg.train.distributed_strategy == "device_map_auto" else None,
+        device_map=device_map,
         trust_remote_code=True,
         token=token,
         attn_implementation=os.environ.get("RAIDEN_ATTN_IMPL", "sdpa"),
@@ -135,7 +156,21 @@ def load_quantized_base(cfg):
         logger.warning("pre-load AutoConfig probe failed: %s", exc)
 
     try:
-        model = auto_cls.from_pretrained(cfg.base_model, **model_kwargs)
+        if expert_policy == "nf4_freeze":
+            install_expert_nf4_forward()
+            with expert_nf4_load_hooks():
+                model = auto_cls.from_pretrained(cfg.base_model, **model_kwargs)
+            n_nf4 = count_nf4_expert_modules(model)
+            if n_nf4 == 0:
+                raise RaidenCompatibilityError(
+                    "packed_expert_policy=nf4_freeze but no Glm5NextTextExperts were NF4-quantized "
+                    "during load. Refusing to continue with BF16 packed experts (will not fit)."
+                )
+            logger.info("packed experts NF4-ready modules: %s", n_nf4)
+        else:
+            model = auto_cls.from_pretrained(cfg.base_model, **model_kwargs)
+    except RaidenCompatibilityError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise RaidenCompatibilityError(
             f"Failed to load {cfg.base_model} in 4-bit QLoRA mode via {auto_cls.__name__}: {exc}. "

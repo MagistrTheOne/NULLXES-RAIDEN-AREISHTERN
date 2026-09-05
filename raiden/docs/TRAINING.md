@@ -24,7 +24,7 @@ Config: `configs/raiden_qlora.yaml`. Preference / DPO config exists and is **dis
 | Component | Policy |
 | --------- | ------ |
 | MoE router / gate | Frozen |
-| Packed expert parameters | Frozen |
+| Packed expert parameters | Frozen (NF4 on single-B300; BF16 cannot fit 275 GiB) |
 | Vision encoder | Frozen |
 | Indexer, mHC, embeddings, lm_head | Frozen |
 | Linear attention + dense/shared MLP | LoRA |
@@ -51,7 +51,7 @@ Preference pairs are hard negatives (correct-but-deferential, stubbornness vs up
 
 ## Compatibility notes (foundation)
 
-The Stage I foundation is a hybrid MoE multimodal decoder (`Glm5NextForConditionalGeneration` in current Transformers). Packed experts are `nn.Parameter`, not `nn.Linear`, so bitsandbytes Linear4bit does not cover them. Stage I QLoRA is therefore Linear-module QLoRA with frozen packed experts. That is documented, not a silent method switch. Setting `qlora.require_expert_4bit: true` aborts on purpose.
+The Stage I foundation is a hybrid MoE multimodal decoder (`Glm5NextForConditionalGeneration` in current Transformers). Packed experts are `nn.Parameter`, not `nn.Linear`, so bitsandbytes Linear4bit does not cover them. Stage I QLoRA is Linear-module QLoRA with frozen packed experts. On one B300 those experts are stored NF4 (`packed_expert_policy: nf4_freeze`) so the load fits; LoRA still does not adapt them. That is documented, not a silent method switch to LoRA-bf16. Setting `qlora.require_expert_4bit: true` still aborts (that flag means Linear4bit-on-experts, which cannot exist).
 
 Failure table and Hub details stay in operator logs and this document — not in the public README.
 
