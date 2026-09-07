@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from raiden.family import FORBIDDEN_BASE_REASON, forbidden_base_hit
 from raiden.identity import BASE_ARCHITECTURE, BASE_MODEL_TYPE, BASE_REPO_BF16, BASE_REPO_PUBLIC
 
 
@@ -197,6 +198,14 @@ def check_environment(
     load_weights: bool = False,
 ) -> CompatReport:
     report = CompatReport(ok=True)
+    banned = forbidden_base_hit(base_model)
+    if banned:
+        report.errors.append(
+            f"base_model={base_model!r} is forbidden ({banned}). {FORBIDDEN_BASE_REASON}"
+        )
+        report.ok = False
+        return report
+
     facts = inspect_packages()
     report.facts["packages"] = facts
 

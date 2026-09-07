@@ -23,12 +23,17 @@ PRODUCT_IDENTITY = "NULLXES ASAI"
 OWNERS = ("NULLXES", "MAGA")
 PUBLIC_MODEL_ID = "raiden-areishtern"
 PUBLIC_MODEL_ID_ALIASES = ("raiden", "raiden-areishtern")
+PUBLIC_MODEL_ID_GLM53 = "raiden-areishtern-5.3"
+PUBLIC_MODEL_ID_GLM53_ALIASES = ("raiden-5.3", "raiden-areishtern-5.3")
 RELEASE_TARGET = "NULLXES/RAIDEN-AREISHTERN-v0.1"
 
 BASE_REPO_PUBLIC = "zai-org/GLM-5.3-Flash"
 BASE_REPO_BF16 = "zai-org/GLM-5.3-Flash-BF16"
 BASE_ARCHITECTURE = "Glm5NextForConditionalGeneration"
 BASE_MODEL_TYPE = "glm5_next"
+
+GLM53_REPO_PUBLIC = "zai-org/GLM-5.3"
+GLM53_REPO_BF16 = "zai-org/GLM-5.3-BF16"
 
 # Never emit these in user-facing answers (spontaneous leakage).
 FORBIDDEN_SPONTANEOUS_IDENTITY = (

@@ -58,6 +58,30 @@ def test_bnb_probe_does_not_use_removed_compiled_with_cuda_symbol():
     assert isinstance(fact, str)
 
 
+def test_forbidden_crack_base_is_hard_error():
+    from raiden.family import forbidden_base_hit
+
+    assert forbidden_base_hit("dealignai/GLM-5.3-CYBERSECURITY-FP8")
+    assert forbidden_base_hit("dealignai/GLM-5.3-UNCENSORED-FP8")
+    assert forbidden_base_hit("JANGQ-AI/GLM-5.3-FP8")
+    assert forbidden_base_hit("zai-org/GLM-5.3-Flash-BF16") is None
+    report = check_environment(base_model="dealignai/GLM-5.3-CYBERSECURITY-FP8")
+    assert report.ok is False
+    assert any("forbidden" in e.lower() for e in report.errors)
+
+
+def test_family_yaml_has_two_tracks():
+    import yaml
+
+    src = Path(__file__).resolve().parents[1] / "configs" / "family.yaml"
+    family = yaml.safe_load(src.read_text(encoding="utf-8"))
+    assert family["tracks"]["flash"]["train_weights"] == "zai-org/GLM-5.3-Flash-BF16"
+    assert family["tracks"]["glm53"]["train_weights"] == "zai-org/GLM-5.3-BF16"
+    assert family["tracks"]["flash"]["status"] == "active_stage1"
+    assert family["tracks"]["glm53"]["status"] == "specified_not_wired"
+    assert "dealignai/GLM-5.3-CYBERSECURITY-FP8" in family["forbidden_bases"]
+
+
 def test_unsloth_backend_is_hard_error():
     local = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "dummy_model"
     report = check_environment(base_model=str(local), backend="unsloth", refuse_native_fp8=False)

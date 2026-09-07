@@ -1,7 +1,8 @@
 # NULLXES RAIDEN AREISHTERN — Stage I QLoRA SFT
 # Behavioral / identity post-training. Router frozen. Vision frozen.
 # Training weights: BF16. Product base: zai-org/GLM-5.3-Flash.
-# Method: QLoRA only. No silent fallback to LoRA-bf16 / full-FT.
+# Second SKU (not this file): zai-org/GLM-5.3-BF16 → public id raiden-areishtern-5.3.
+# Family spec: configs/family.yaml. CRACK/uncensored dumps are forbidden bases.
 
 product_model_id: raiden-areishtern
 release_target: NULLXES/RAIDEN-AREISHTERN-v0.1

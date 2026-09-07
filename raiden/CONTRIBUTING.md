@@ -24,6 +24,8 @@ PYTHONPATH=src pytest -q
 | Eval | [docs/EVALUATION.md](docs/EVALUATION.md) |
 | Pod commands | [docs/RUNPOD.md](docs/RUNPOD.md) |
 | B300 live runbook | [docs/RUNBOOK.md](docs/RUNBOOK.md) |
+| Two SKUs / family | [configs/family.yaml](configs/family.yaml) |
+| B300 live runbook | [docs/RUNBOOK.md](docs/RUNBOOK.md) |
 
 ## Dataset regenerate
 

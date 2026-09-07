@@ -18,7 +18,22 @@ Behavior target: [IDENTITY.md](IDENTITY.md).
 
 Default LoRA: `r=64`, `alpha=64`, `dropout=0.05`, `max_length=4096`.
 
-Config: `configs/raiden_qlora.yaml`. Preference / DPO config exists and is **disabled** until an SFT checkpoint is chosen from the eval curve.
+Config: `configs/raiden_qlora.yaml`. Family (two SKUs): `configs/family.yaml`. Preference / DPO config exists and is **disabled** until an SFT checkpoint is chosen from the eval curve.
+
+## Two SKUs
+
+| Track | Public id | Train weights | Status |
+| ----- | --------- | ------------- | ------ |
+| Flash | `raiden-areishtern` | `zai-org/GLM-5.3-Flash-BF16` | **active Stage I** (this trainer) |
+| GLM-5.3 | `raiden-areishtern-5.3` | `zai-org/GLM-5.3-BF16` | specified, **not wired** |
+
+Flash is MIT, hybrid Glm5Next, ~320B, one B300 + `nf4_freeze`.
+
+GLM-5.3 is a different model: `glm_moe_dsa`, ~753B / ~39B active, 78 layers, text-only, GLM-5.3 license (not MIT). Official FP8 card is `zai-org/GLM-5.3`. Serving that FP8 class fits **8× H200 TP8** (same node class [dealignai documented for a third-party FP8 dump](https://huggingface.co/dealignai/GLM-5.3-CYBERSECURITY-FP8)). That is **serve math**, not a base swap.
+
+Do **not** train RAIDEN on CRACK / uncensored / abliterated dumps (`dealignai/GLM-5.3-CYBERSECURITY-FP8`, siblings, `JANGQ-AI/GLM-5.3-FP8`). They are native FP8, a weight-edit method, and they are tuned to drop cyber-offense refusals. RAIDEN identity is QLoRA on official BF16. `compatibility.py` refuses those repos.
+
+`raiden.train` remains Flash-only until a separate glm53 loader exists. Pointing `raiden_qlora.yaml` at GLM-5.3-BF16 will fail the Glm5Next architecture gate on purpose.
 
 ## Freeze policy (Stage I)
 

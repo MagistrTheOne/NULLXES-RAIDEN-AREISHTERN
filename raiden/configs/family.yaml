@@ -1,0 +1,73 @@
+# NULLXES RAIDEN AREISHTERN — foundation family
+# Two product SKUs. One wired trainer. Do not swap a CRACK dump into Stage I.
+
+product: RAIDEN AREISHTERN
+organization: NULLXES
+
+tracks:
+  flash:
+    status: active_stage1
+    public_id: raiden-areishtern
+    aliases: [raiden, raiden-areishtern]
+    train_weights: zai-org/GLM-5.3-Flash-BF16
+    product_card: zai-org/GLM-5.3-Flash
+    architecture: Glm5NextForConditionalGeneration
+    model_type: glm5_next
+    params_total: ~320B
+    params_active: ~18B
+    license: MIT
+    multimodal: true
+    trainer: configs/raiden_qlora.yaml
+    method: qlora_nf4_linear_lora
+    packed_expert_policy: nf4_freeze
+    train_hardware:
+      min: 1x B300 ~275 GiB
+      notes: >
+        BF16 packed experts ~610 GiB do not fit one B300. nf4_freeze is required.
+        2x B300 (576 GiB) still does not fit freeze_bf16. Second GPU is spare, not a method change.
+    serve_hardware:
+      qlora_or_4bit: 1x B300 or 2x H200
+      fp8_official: 4–8x H100/H200 class
+      bf16_full: 8x H100/H200 or 2x B300 is NOT enough (~643 GiB weights)
+
+  glm53:
+    status: specified_not_wired
+    public_id: raiden-areishtern-5.3
+    aliases: [raiden-5.3, raiden-areishtern-5.3]
+    train_weights: zai-org/GLM-5.3-BF16
+    product_card: zai-org/GLM-5.3
+    architecture: glm_moe_dsa
+    model_type: glm_moe_dsa
+    params_total: ~753B
+    params_active: ~39B
+    layers: 78
+    routed_experts: 256
+    experts_per_token: 8
+    hidden_size: 6144
+    multimodal: false
+    license: GLM-5.3 (not MIT)
+    trainer: null
+    method: qlora_nf4_linear_lora  # same method lock when wired; not Flash loader
+    packed_expert_policy: TBD
+    train_hardware:
+      min: 8x H200 / 8x B300 class as a planning floor
+      notes: >
+        BF16 dump is ~1.5 TB. Current raiden.train / expert_nf4 is Glm5Next-only.
+        Do not point raiden_qlora.yaml at this repo. Native FP8 zai-org/GLM-5.3 is refuse_native_fp8.
+    serve_hardware:
+      fp8_official: 8x H200 SXM TP8 (community-confirmed for this weight class)
+      bf16_full: multi-node
+      notes: >
+        dealignai vLLM recipe (TP8, 8x H200, max-model-len 131072) proves 753B FP8 fits that node.
+        That is serving math, not permission to train on a CRACK.
+
+forbidden_bases:
+  - dealignai/GLM-5.3-CYBERSECURITY-FP8
+  - dealignai/GLM-5.3-UNCENSORED-FP8
+  - dealignai/GLM-5.3-Flash-UNCENSORED-FP8
+  - JANGQ-AI/GLM-5.3-FP8
+
+forbidden_bases_reason: >
+  Third-party FP8 / abliteration / uncensored dumps are not RAIDEN bases.
+  RAIDEN does not train a cyber-offense refusal-removed foundation.
+  QLoRA needs official BF16. Identity is LoRA, not a CRACK of residual writers.
