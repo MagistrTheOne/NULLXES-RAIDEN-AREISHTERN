@@ -91,6 +91,21 @@ def test_routed_expert_linear_keys_match_official_bf16():
     assert not is_packed_expert_weight_key(k)
 
 
+def test_resolve_hub_id_to_local_snapshot(tmp_path, monkeypatch):
+    from raiden.expert_nf4_cache import resolve_model_dir
+
+    models = tmp_path / "models"
+    snap = models / "GLM-5.3-Flash-BF16"
+    key = "model.language_model.layers.10.mlp.experts.0.gate_proj.weight"
+    _fake_index(snap, [key])
+    monkeypatch.setenv("RAIDEN_MODELS", str(models))
+    got = resolve_model_dir("zai-org/GLM-5.3-Flash-BF16")
+    assert got == snap
+    pre = expert_cache_preflight("zai-org/GLM-5.3-Flash-BF16", tmp_path / "cache", "nf4_freeze")
+    assert pre["layout"] == "per_expert_linear"
+    assert pre["cache"] == "NOT_REQUIRED"
+
+
 def test_per_expert_linear_layout_skips_packed_cache(tmp_path):
     from raiden.expert_nf4_cache import expert_storage_layout
 

@@ -245,9 +245,15 @@ class RaidenConfig:
             languages=tuple(ds.get("languages", ["ru", "en", "mixed"])),
             mix=ds.get("mix") or DatasetConfig().mix,
         )
+        base_model = raw.get("base_model", "zai-org/GLM-5.3-Flash-BF16")
+        from raiden.expert_nf4_cache import resolve_model_dir
+
+        resolved = resolve_model_dir(base_model)
+        if (resolved / "model.safetensors.index.json").is_file():
+            base_model = str(resolved)
         return cls(
             raw=raw,
-            base_model=raw.get("base_model", "zai-org/GLM-5.3-Flash-BF16"),
+            base_model=base_model,
             product_model_id=raw.get("product_model_id", "raiden-areishtern"),
             qlora=qlora,
             lora=lora,

@@ -58,8 +58,31 @@ def is_routed_expert_linear_key(key: str) -> bool:
     return ".".join(parts[i + 2 :]) in {"gate_proj.weight", "up_proj.weight", "down_proj.weight"}
 
 
+def resolve_model_dir(model_id: str | Path) -> Path:
+    """Hub id → local snapshot when /workspace/models/<name> has an index.
+
+    rsync of configs/raiden_qlora.yaml restores zai-org/... and would otherwise
+    look like NO_INDEX even with 599G already on the volume.
+    """
+    p = Path(str(model_id)).expanduser()
+    if (p / "model.safetensors.index.json").is_file():
+        return p
+    name = p.name
+    roots = [
+        Path(os.environ.get("RAIDEN_MODELS", "/workspace/models")),
+        Path("/workspace/models"),
+    ]
+    for root in roots:
+        cand = root / name
+        if (cand / "model.safetensors.index.json").is_file():
+            logger.info("resolved base_model %s -> %s", model_id, cand)
+            return cand
+    return p
+
+
 def expert_storage_layout(model_dir: str | Path) -> str:
     """packed_3d | per_expert_linear | unknown"""
+    model_dir = resolve_model_dir(model_dir)
     try:
         keys = list(iter_index_weight_map(Path(model_dir)))
     except (FileNotFoundError, ValueError):
@@ -150,6 +173,7 @@ def resolve_cached_key(cache_dir: Path, key: str) -> str | None:
 
 
 def iter_index_weight_map(model_dir: Path) -> dict[str, str]:
+    model_dir = resolve_model_dir(model_dir)
     index = model_dir / "model.safetensors.index.json"
     if not index.exists():
         raise FileNotFoundError(f"missing {index}")
@@ -291,11 +315,8 @@ def finalize_materialize(model_dir: Path, cache_dir: Path) -> dict[str, Any]:
 
 
 def inspect_cache_state(model_dir: Path, cache_dir: Path | None) -> str:
-    """Return MISSING | MATERIALIZING | INCOMPLETE | READY | CORRUPTED | NO_INDEX.
-
-    READY is a verified manifest, not 'the folder exists'. A 97% crash stays
-    MATERIALIZING or INCOMPLETE until finalize_materialize writes READY.
-    """
+    """Return MISSING | MATERIALIZING | INCOMPLETE | READY | CORRUPTED | NO_INDEX | NOT_REQUIRED."""
+    model_dir = resolve_model_dir(model_dir)
     if cache_dir is None:
         layout = expert_storage_layout(model_dir) if Path(model_dir).joinpath("model.safetensors.index.json").exists() else "unknown"
         return "NOT_REQUIRED" if layout == "per_expert_linear" else "MISSING"
@@ -353,6 +374,7 @@ def expert_cache_preflight(model_dir: str | Path, cache_dir: Path | None, policy
     layers = None
     experts_per_layer = None
     checksum = ""
+    layout = expert_storage_layout(model_dir)
     try:
         keys = packed_expert_keys(model_dir)
         expected = len(keys)
@@ -363,12 +385,13 @@ def expert_cache_preflight(model_dir: str | Path, cache_dir: Path | None, policy
             experts_per_layer = man.get("experts_per_layer")
             checksum = str(man.get("checksum") or "")
     except FileNotFoundError:
-        status = "NO_INDEX"
+        if layout != "per_expert_linear":
+            status = "NO_INDEX"
     stats = cache_dir_stats(cache_dir) if cache_dir is not None else {"n_files": 0, "n_bytes": 0}
     bf16_read = "SKIPPED" if status == "READY" else ("BNB_LINEAR4BIT" if status == "NOT_REQUIRED" else "LIVE_QUANT")
     report = {
         "expert_policy": policy,
-        "layout": expert_storage_layout(model_dir) if (model_dir / "model.safetensors.index.json").exists() else "unknown",
+        "layout": layout,
         "cache": status,
         "cache_dir": str(cache_dir) if cache_dir is not None else "",
         "cached_experts": cached,
