@@ -38,6 +38,8 @@ python3 scripts/validate_dataset.py \
 
 python3 scripts/inspect_model.py --config "$CONFIG" --out "${RAIDEN_LOGS:-/workspace/logs}/inspect_pretrain.json"
 
+python3 -m raiden.validate_runtime --config "$CONFIG"
+
 echo "starting QLoRA SFT (resume=auto). log: $LOG"
 exec python3 -m raiden.train \
   --config "$CONFIG" \

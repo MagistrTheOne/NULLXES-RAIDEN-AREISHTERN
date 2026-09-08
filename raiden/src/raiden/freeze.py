@@ -76,17 +76,53 @@ def _find_visual(model: Any):
     return None
 
 
-def assert_router_frozen(model: Any) -> None:
+def _leaked_trainable(model: Any, predicate) -> list[str]:
     leaked = []
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
         if "lora_" in name:
             continue
-        if ROUTER_PATH.search(name) and "gate_proj" not in name:
+        if predicate(name):
             leaked.append(name)
+    return leaked
+
+
+def assert_router_frozen(model: Any) -> None:
+    leaked = _leaked_trainable(
+        model, lambda name: bool(ROUTER_PATH.search(name) and "gate_proj" not in name)
+    )
     if leaked:
         raise RuntimeError(
             "Stage I router freeze violated. Trainable router tensors:\n  "
             + "\n  ".join(leaked[:20])
         )
+
+
+def assert_vision_frozen(model: Any) -> None:
+    leaked = _leaked_trainable(model, lambda name: bool(VISION_PATH.search(name)))
+    if leaked:
+        raise RuntimeError(
+            "Stage I vision freeze violated. Trainable vision tensors:\n  "
+            + "\n  ".join(leaked[:20])
+        )
+
+
+def assert_packed_experts_frozen(model: Any) -> None:
+    leaked = _leaked_trainable(
+        model, lambda name: classify_path(name) == "expert" or bool(EXPERT_PATH.search(name))
+    )
+    if leaked:
+        raise RuntimeError(
+            "Stage I packed-expert freeze violated. Trainable expert tensors:\n  "
+            + "\n  ".join(leaked[:20])
+        )
+
+
+def assert_lora_attached(model: Any) -> None:
+    n = 0
+    for name, param in model.named_parameters():
+        if "lora_" in name and param.requires_grad:
+            n += 1
+    if n == 0:
+        raise RuntimeError("Stage I LoRA is missing: no trainable lora_ parameters after PEFT wrap.")

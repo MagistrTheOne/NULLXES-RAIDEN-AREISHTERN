@@ -257,7 +257,9 @@ The current Stage I training pipeline targets **RunPod** deployments with persis
 
 Training artifacts, datasets, model caches, checkpoints, and logs are stored independently from ephemeral compute instances to support interruption and resume workflows.
 
-Infrastructure and operator instructions: [Training environment](docs/RUNPOD.md).
+**Expert NF4 cache is an external runtime artifact. It is not a model checkpoint and must not be pushed as model weights.** Keep it on the network volume (`/workspace/cache/expert_nf4`). Do not bake it into a Docker image. Stage I is `base model + runtime quant cache + behavioral adapter`, not one monolithic RAIDEN checkpoint.
+
+Infrastructure and operator instructions: [Training environment](docs/RUNPOD.md). Live B300 procedure: [Runbook](docs/RUNBOOK.md).
 
 ---
 
@@ -270,6 +272,7 @@ Infrastructure and operator instructions: [Training environment](docs/RUNPOD.md)
 | [Training](docs/TRAINING.md) | QLoRA, dataset mix, configs |
 | [Evaluation](docs/EVALUATION.md) | RAIDEN eval methodology |
 | [Training environment](docs/RUNPOD.md) | RunPod bootstrap, train, resume |
+| [Runbook](docs/RUNBOOK.md) | B300 cache, `validate_runtime`, SFT gate |
 
 ---
 

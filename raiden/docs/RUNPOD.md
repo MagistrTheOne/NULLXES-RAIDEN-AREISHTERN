@@ -15,6 +15,7 @@ Do not run `train_raiden.sh` / `train_detached.sh` on the current dataset: val i
 /workspace/checkpoints/
 /workspace/logs/
 /workspace/cache/          # HF_HOME, torch, tmp
+/workspace/cache/expert_nf4/  # packed-expert NF4 runtime artifact — not a checkpoint
 ```
 
 `scripts/runpod_bootstrap.sh` writes `/workspace/raiden.env`.
@@ -45,6 +46,9 @@ python3 /workspace/raiden/scripts/validate_dataset.py \
 python3 /workspace/raiden/scripts/inspect_model.py \
   --config /workspace/raiden/configs/raiden_qlora.yaml \
   --out /workspace/logs/inspect_pretrain.json
+
+# Do not start SFT because a cache folder exists.
+# Materialize + `python -m raiden.validate_runtime` first: RUNBOOK.md.
 
 bash /workspace/raiden/scripts/train_detached.sh
 tail -n 80 /workspace/logs/train_detached.log

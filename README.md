@@ -122,6 +122,8 @@ The first development stage focuses on behavioral and identity post-training. It
 
 Primary targets: identity, anti-sycophancy, direct communication, calibration, capability preservation.
 
+Stage I is a **base model + runtime quant cache + behavioral adapter**. The packed-expert NF4 cache is an **external runtime artifact**. It is not a model checkpoint and must not be pushed as RAIDEN weights.
+
 ---
 
 ## Status
@@ -147,6 +149,7 @@ STATUS        IN DEVELOPMENT
 | [Training](raiden/docs/TRAINING.md) | QLoRA, dataset mix, configs |
 | [Evaluation](raiden/docs/EVALUATION.md) | RAIDEN eval methodology |
 | [Training environment](raiden/docs/RUNPOD.md) | RunPod bootstrap, train, resume |
+| [Runbook](raiden/docs/RUNBOOK.md) | B300 cache, validate_runtime, SFT gate |
 
 ---
 

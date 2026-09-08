@@ -59,9 +59,38 @@ One empty-GPU pass over safetensors. After that, train load must log `via=cache`
 /workspace/cache/expert_nf4/<safetensors_key>.pt
 ```
 
-- **Materialize** reads only packed expert keys (~610 GiB once), quantizes int32-safe chunks on a **free** GPU, writes ~150 GiB NF4. Resume-safe: finished keys are skipped.
-- **Train** wraps `safe_open.get_tensor`: cache hits return a meta tensor (no 9.7 GiB BF16 read) and attach from `.pt`.
+Layout stays **flat** `{key}.pt` plus `manifest.json`. Do not reshuffle 150 GiB into `layer_000/` directories. `du` / `find` are not the source of truth.
+
+`manifest.json` fields (Flash experts are **288 per layer**, not 16):
+
+```json
+{
+  "model": "GLM-5.3-Flash-BF16",
+  "layers": 40,
+  "experts_per_layer": 288,
+  "quant": "nf4",
+  "status": "READY",
+  "checksum": "sha256 of key/shape/bytes metadata"
+}
+```
+
+Checksum is **metadata** (keys, shapes, on-disk sizes), not a 150 GiB blob hash at every start.
+
+States:
+
+| State | Meaning |
+| --- | --- |
+| `MISSING` | no verified cache |
+| `MATERIALIZING` | write in progress, or crash before `finalize` |
+| `INCOMPLETE` | some keys present, not READY |
+| `READY` | manifest verified; SFT may start |
+| `CORRUPTED` | size or checksum mismatch |
+
+- **Materialize** reads only packed expert keys (~610 GiB once), quantizes int32-safe chunks on a **free** GPU, writes ~150 GiB NF4. Sets `MATERIALIZING` immediately; `READY` only after every expert is on disk. Resume-safe: finished keys are skipped.
+- **Train** wraps `safe_open.get_tensor` **only if READY**: cache hits return a meta tensor (no 9.7 GiB BF16 read) and attach from `.pt`.
 - Floor after cache: Linear/vision/embeddings through BnB (~33 GiB) + reading the NF4 cache (~150 GiB) — tens of minutes, not hours.
+
+**Expert NF4 cache is an external runtime artifact. It is not a model checkpoint and must not be pushed as model weights.** Keep `/workspace/cache/expert_nf4` on the **network volume**, never in the Docker image. Payload estimate: ~3.6 GiB NF4 q-data per MoE layer × ~40 layers ≈ **140–180 GiB** on disk (plus `torch.save` overhead). First `materialize_experts` is I/O-bound on ~610 GiB BF16 reads; with a free GPU expect **~45–90 min**, not the 2–3 h in-train path. Interrupted runs resume. Next train must log `cache=READY` and `bf16_expert_read=SKIPPED` before `from_pretrained`. `MISSING` / `MATERIALIZING` / `INCOMPLETE` / `CORRUPTED` abort.
 
 Still QLoRA. Still Linear-only LoRA.
 
@@ -80,9 +109,12 @@ git clone --depth 1 https://github.com/MagistrTheOne/NULLXES-RAIDEN-AREISHTERN.g
 cp /tmp/nullxes-src/raiden/src/raiden/expert_nf4.py /workspace/raiden/src/raiden/expert_nf4.py
 cp /tmp/nullxes-src/raiden/src/raiden/expert_nf4_cache.py /workspace/raiden/src/raiden/expert_nf4_cache.py
 cp /tmp/nullxes-src/raiden/src/raiden/materialize_experts.py /workspace/raiden/src/raiden/materialize_experts.py
+cp /tmp/nullxes-src/raiden/src/raiden/validate_runtime.py /workspace/raiden/src/raiden/validate_runtime.py
 cp /tmp/nullxes-src/raiden/src/raiden/model.py /workspace/raiden/src/raiden/model.py
+cp /tmp/nullxes-src/raiden/src/raiden/train.py /workspace/raiden/src/raiden/train.py
+cp /tmp/nullxes-src/raiden/src/raiden/freeze.py /workspace/raiden/src/raiden/freeze.py
 cp /tmp/nullxes-src/raiden/src/raiden/paths.py /workspace/raiden/src/raiden/paths.py
-grep -n "skip_cached_expert_reads\|RAIDEN_EXPERT_NF4_CACHE" /workspace/raiden/src/raiden/model.py
+grep -n "skip_cached_expert_reads\|RAIDEN_EXPERT_NF4_CACHE\|validate_runtime" /workspace/raiden/src/raiden/model.py /workspace/raiden/src/raiden/train.py
 ```
 
 ## Materialize (do this before the next train)
@@ -112,16 +144,60 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 p=Path("/workspace/cache/expert_nf4/manifest.json")
-print("manifest", p.exists(), "n", len(json.loads(p.read_text())["tensors"]) if p.exists() else 0)
+if not p.exists():
+    print("manifest MISSING")
+else:
+    m=json.loads(p.read_text())
+    print("status", m.get("status"), "n", len(m.get("tensors") or {}), "layers", m.get("layers"), "experts_per_layer", m.get("experts_per_layer"), "checksum", (m.get("checksum") or "")[:12])
 PY
 nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv
 ```
 
-Interrupted materialize: **re-run the same command**. It skips keys already in the manifest.
+Interrupted materialize: **re-run the same command**. It skips keys already in the manifest. Until the log says `status=READY`, train must not start.
 
-Done when the log says `materialize complete` and `manifest` count equals packed-expert keys (on the order of 80: ~40 MoE layers × 2).
+Done when the log says `materialize complete status=READY` and `manifest.json` has `"status": "READY"` with packed-expert key count on the order of 80 (~40 MoE layers × 2). `experts_per_layer` must be **288** on Flash.
 
-## QA 30 steps (only after cache complete)
+## Dry-run (required before the first SFT)
+
+Do not start QA because a folder exists. Cache-only is seconds; `--full` loads the model (minutes, GPU).
+
+```bash
+source /workspace/raiden.env
+export PYTHONPATH=/workspace/raiden/src
+export PYTHONUNBUFFERED=1
+export RAIDEN_EXPERT_NF4_CACHE=/workspace/cache/expert_nf4
+cd /workspace/raiden
+python3 -m raiden.validate_runtime --config /workspace/raiden/configs/raiden_qlora.yaml
+```
+
+Need:
+
+```text
+✓ expert cache READY
+✓ BF16 expert path disabled
+```
+
+Then, with GPU free and **not** during materialize:
+
+```bash
+python3 -m raiden.validate_runtime --config /workspace/raiden/configs/raiden_qlora.yaml --full
+```
+
+Need:
+
+```text
+✓ base model loaded
+✓ router frozen
+✓ vision frozen
+✓ experts frozen
+✓ LoRA attached
+✓ expert cache READY
+✓ BF16 expert path disabled
+```
+
+`raiden.train` repeats the cache gate and only then logs `STARTING RAIDEN SFT STAGE I`. `cache=MATERIALIZING` after a 97% crash is a hard stop, not a cache hit.
+
+## QA 30 steps (only after cache READY)
 
 Do not use `train_raiden.sh`. Output stays `/workspace/checkpoints/raiden-sft-qa`. Full Stage I later uses `/workspace/checkpoints/raiden-sft-stage1` (do not reuse the QA dir).
 
@@ -161,7 +237,7 @@ Preference / DPO stays off.
 | `c943729` | batched NF4 — **do not use**, int32 abort |
 | `d0f9908` | `via=chunk119` / `chunk238` (safe launch) |
 | `713bfb4` | disk cache + `materialize_experts` + skip BF16 reads |
-| this tree | frozen expert `W` stays detached; `dL/dx` through experts is live |
+| this tree | manifest `READY` gate, `validate_runtime`, frozen expert `dL/dx` |
 
 ## Secrets
 

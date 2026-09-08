@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,18 @@ from raiden.expert_nf4 import (
     resolve_packed_expert_policy,
     skip_cached_expert_reads,
 )
-from raiden.expert_nf4_cache import cache_is_complete, expert_nf4_cache_dir
-from raiden.freeze import apply_freeze, assert_router_frozen
+from raiden.expert_nf4_cache import (
+    expert_cache_preflight,
+    expert_nf4_cache_dir,
+    refuse_unready_expert_cache,
+)
+from raiden.freeze import (
+    apply_freeze,
+    assert_lora_attached,
+    assert_packed_experts_frozen,
+    assert_router_frozen,
+    assert_vision_frozen,
+)
 from raiden.lora import census_from_model, dump_census_json, peft_lora_config, plan_stage1_lora
 
 logger = logging.getLogger("raiden")
@@ -163,12 +174,10 @@ def load_quantized_base(cfg):
         if expert_policy == "nf4_freeze":
             install_expert_nf4_forward()
             cache_dir = expert_nf4_cache_dir()
-            if cache_dir is not None and cache_is_complete(Path(cfg.base_model), cache_dir):
-                logger.info(
-                    "packed-expert NF4 cache complete at %s — skipping BF16 expert reads",
-                    cache_dir,
-                )
-            with skip_cached_expert_reads(cache_dir), expert_nf4_load_hooks():
+            pre = expert_cache_preflight(cfg.base_model, cache_dir, expert_policy)
+            refuse_unready_expert_cache(pre)
+            skip_bf16 = skip_cached_expert_reads(cache_dir) if pre["cache"] == "READY" else nullcontext()
+            with skip_bf16, expert_nf4_load_hooks():
                 model = auto_cls.from_pretrained(cfg.base_model, **model_kwargs)
             attach_cached_experts_on_model(model, cache_dir)
             n_nf4 = count_nf4_expert_modules(model)
@@ -237,6 +246,11 @@ def load_qlora_model(cfg, inspection_out: str | None = None):
     stats = apply_freeze(model, cfg.freeze)
     if cfg.freeze.freeze_router:
         assert_router_frozen(model)
+    if cfg.freeze.freeze_vision:
+        assert_vision_frozen(model)
+    if cfg.freeze.freeze_packed_experts:
+        assert_packed_experts_frozen(model)
+    assert_lora_attached(model)
     model.print_trainable_parameters()
     logger.info("freeze stats: %s", stats)
     if hasattr(model, "config"):

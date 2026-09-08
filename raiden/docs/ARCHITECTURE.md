@@ -34,6 +34,8 @@ Stage I does not rebuild coding, tools, or world knowledge. It changes *how* tho
 
 The foundation weights remain a separate artifact. Public interfaces never bind RAIDEN's name to a training checkpoint path. See [Identity](IDENTITY.md) and [deployment/serving_identity.md](../deployment/serving_identity.md).
 
+On the training pod, Stage I is three pieces: official BF16 base, packed-expert NF4 **runtime cache**, and the behavioral LoRA adapter. The cache lives on the network volume. It is not a RAIDEN checkpoint and must not be published as model weights.
+
 ## Memory
 
 Not part of Stage I training. Runtime target:

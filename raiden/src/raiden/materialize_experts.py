@@ -19,8 +19,11 @@ from pathlib import Path
 
 from raiden.expert_nf4 import quantize_packed_expert_tensor
 from raiden.expert_nf4_cache import (
+    begin_materialize,
+    cache_dir_stats,
     cache_has_tensor,
     cache_missing_keys,
+    finalize_materialize,
     iter_index_weight_map,
     packed_expert_keys,
     save_expert_blob,
@@ -50,6 +53,7 @@ def materialize(model_dir: Path, cache_dir: Path) -> int:
         raise SystemExit(f"no packed expert keys in {model_dir}")
     weight_map = iter_index_weight_map(model_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
+    begin_materialize(model_dir, cache_dir)
     missing = [k for k in keys if not cache_has_tensor(cache_dir, k)]
     log.info(
         "materialize packed-expert NF4 model=%s out=%s total=%s missing=%s gpu=%s",
@@ -80,10 +84,29 @@ def materialize(model_dir: Path, cache_dir: Path) -> int:
         done += 1
         log.info("wrote %s/%s %s shape=%s", i, len(keys), key, shape)
     leftover = cache_missing_keys(model_dir, cache_dir)
-    if leftover:
-        log.error("materialize incomplete, missing %s keys (first=%s)", len(leftover), leftover[0])
+    man = finalize_materialize(model_dir, cache_dir)
+    stats = cache_dir_stats(cache_dir)
+    if leftover or man.get("status") != "READY":
+        log.error(
+            "materialize %s, missing %s keys (first=%s)",
+            man.get("status") or "INCOMPLETE",
+            len(leftover),
+            leftover[0] if leftover else "(none)",
+        )
+        log.info("cache files=%s bytes=%s", stats["n_files"], stats["n_bytes"])
         return 2
-    log.info("materialize complete tensors=%s dir=%s", done, cache_dir)
+    log.info(
+        "materialize complete status=READY tensors=%s layers=%s experts_per_layer=%s "
+        "checksum=%s dir=%s files=%s bytes=%s (~%.1f GiB)",
+        done,
+        man.get("layers"),
+        man.get("experts_per_layer"),
+        man.get("checksum"),
+        cache_dir,
+        stats["n_files"],
+        stats["n_bytes"],
+        stats["n_bytes"] / 1024**3,
+    )
     return 0
 
 
