@@ -184,6 +184,26 @@ def test_per_expert_linear_checkpoint_still_needs_packed_cache(tmp_path):
     ) == (8, 2)
 
 
+def test_record_linear_shapes_merges_on_partial_resume(tmp_path):
+    from raiden.expert_nf4_cache import load_manifest, record_linear_shapes
+
+    cache = tmp_path / "cache"
+    save_manifest(
+        cache,
+        {
+            "v": 2,
+            "status": "MATERIALIZING",
+            "tensors": {},
+            "linear_shapes": {"gate_proj": [2048, 4096], "up_proj": [2048, 4096], "down_proj": [4096, 2048]},
+        },
+    )
+    record_linear_shapes(cache, {"down_proj": [4096, 2048]})
+    got = load_manifest(cache)["linear_shapes"]
+    assert got["gate_proj"] == [2048, 4096]
+    assert got["up_proj"] == [2048, 4096]
+    assert got["down_proj"] == [4096, 2048]
+
+
 def test_fuse_gate_up_matches_hf_concatenate_dim1():
     import torch
 

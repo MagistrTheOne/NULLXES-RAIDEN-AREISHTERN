@@ -31,6 +31,7 @@ from raiden.expert_nf4_cache import (
     fuse_gate_up_stacked,
     group_linear_expert_keys,
     iter_index_weight_map,
+    load_manifest,
     packed_expert_keys,
     record_linear_shapes,
     runtime_expert_layout,
@@ -107,7 +108,7 @@ def _materialize_from_linear(model_dir: Path, cache_dir: Path, weight_map: dict[
         "stacking per-expert Linears into packed runtime NF4 layers=%s (2 blobs/layer, not 37152 files)",
         n,
     )
-    linear_shapes: dict[str, list[int]] = {}
+    linear_shapes: dict[str, list[int]] = dict(load_manifest(cache_dir).get("linear_shapes") or {})
     for i, prefix in enumerate(prefixes, 1):
         gu_key = f"{prefix}.gate_up_proj"
         dn_key = f"{prefix}.down_proj"
@@ -150,8 +151,8 @@ def _materialize_from_linear(model_dir: Path, cache_dir: Path, weight_map: dict[
             gc.collect()
             torch.cuda.empty_cache()
             log.info("wrote %s/%s %s shape=%s", i, n, dn_key, shape)
-        if linear_shapes:
-            record_linear_shapes(cache_dir, linear_shapes)
+    if linear_shapes:
+        record_linear_shapes(cache_dir, linear_shapes)
 
 
 def materialize(model_dir: Path, cache_dir: Path) -> int:

@@ -157,8 +157,16 @@ def fuse_gate_up_stacked(gate, up):
 
 
 def record_linear_shapes(cache_dir: Path, shapes: dict[str, list[int]]) -> None:
+    """Merge 2D Linear shapes into the manifest. Never drop keys already recorded.
+
+    Resume may only stack `down_proj` for a layer whose gate/up blobs already exist.
+    Replacing the whole map would wipe gate_proj/up_proj and break skip-read meta shapes.
+    """
     man = load_manifest(cache_dir)
-    man["linear_shapes"] = {k: [int(x) for x in v] for k, v in shapes.items()}
+    merged = dict(man.get("linear_shapes") or {})
+    for key, value in shapes.items():
+        merged[key] = [int(x) for x in value]
+    man["linear_shapes"] = merged
     man["checkpoint_layout"] = "per_expert_linear"
     man["runtime_layout"] = "packed_3d"
     save_manifest(cache_dir, man)
