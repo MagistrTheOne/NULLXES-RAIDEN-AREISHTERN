@@ -295,12 +295,11 @@ def plan_stage1_lora(
             "inspect named_modules() before retrying."
         )
 
-    # Collision: down_proj exists on shared_experts (Linear, keep) and experts (Parameter, skip).
-    # PEFT wraps Linear only, so leaf name 'down_proj' is safe IF experts stay Parameters.
     notes.append(
-        "Leaf-name collision: down_proj is Linear on shared_experts/dense MLP and "
-        "nn.Parameter on packed experts. PEFT LoRA wraps Linear only; packed expert "
-        "Parameters are not adapted."
+        "Leaf-name collision: gate_proj/up_proj/down_proj exist on shared_experts "
+        "(LoRA) and on routed experts. Packed 3D dumps: experts are Parameters, PEFT skips them. "
+        "Official BF16 per-expert Linear dump: PEFT would wrap all 37152 expert Linears unless "
+        "exclude_modules filters mlp.experts.<id>."
     )
     if router_experiment_enabled:
         notes.append(
@@ -359,6 +358,8 @@ def peft_lora_config(plan: LoRAPlan, *, r: int, alpha: int, dropout: float, bias
     exclude = []
     if any("visual" in p or p == "visual" for p in plan.freeze_patterns):
         exclude.append("visual")
+    if any(p == "mlp.experts" for p in plan.freeze_patterns):
+        exclude.append(r".*\.mlp\.experts\.\d+\.(gate_proj|up_proj|down_proj)$")
     try:
         return LoraConfig(**kwargs, exclude_modules=exclude or None)
     except TypeError:

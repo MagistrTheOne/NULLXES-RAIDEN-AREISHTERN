@@ -23,6 +23,7 @@ from raiden.expert_nf4_cache import (
     cache_dir_stats,
     cache_has_tensor,
     cache_missing_keys,
+    expert_storage_layout,
     finalize_materialize,
     iter_index_weight_map,
     packed_expert_keys,
@@ -48,6 +49,14 @@ def materialize(model_dir: Path, cache_dir: Path) -> int:
     log = logging.getLogger("raiden")
     if not torch.cuda.is_available():
         raise SystemExit("materialize_experts needs CUDA on the training pod")
+    layout = expert_storage_layout(model_dir)
+    if layout == "per_expert_linear":
+        log.info(
+            "expert_layout=per_expert_linear — routed experts are nn.Linear "
+            "(layers.X.mlp.experts.N.{gate,up,down}_proj). Packed 3D materialize does not apply. "
+            "Stage I QLoRA uses bitsandbytes Linear4bit; do not write 37152 cache files."
+        )
+        return 0
     keys = packed_expert_keys(model_dir)
     if not keys:
         raise SystemExit(f"no packed expert keys in {model_dir}")

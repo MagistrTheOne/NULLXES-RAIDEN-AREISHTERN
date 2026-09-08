@@ -20,6 +20,7 @@ from raiden.expert_nf4 import count_nf4_expert_modules, resolve_packed_expert_po
 from raiden.expert_nf4_cache import (
     expert_cache_preflight,
     expert_nf4_cache_dir,
+    expert_storage_layout,
     refuse_unready_expert_cache,
 )
 from raiden.freeze import (
@@ -43,6 +44,21 @@ def _mark(ok: bool) -> str:
 def cache_checks(model_dir: str, policy: str) -> tuple[list[Check], dict[str, Any]]:
     cache_dir = expert_nf4_cache_dir()
     pre = expert_cache_preflight(model_dir, cache_dir, policy)
+    layout = pre.get("layout") or expert_storage_layout(model_dir)
+    if layout == "per_expert_linear" or pre["cache"] == "NOT_REQUIRED":
+        checks = [
+            (
+                "expert layout per-expert Linear",
+                True,
+                "BnB Linear4bit; packed NF4 cache not used",
+            ),
+            (
+                "BF16 experts go through bitsandbytes",
+                pre["bf16_expert_read"] == "BNB_LINEAR4BIT",
+                f"bf16_expert_read={pre['bf16_expert_read']}",
+            ),
+        ]
+        return checks, pre
     checks = [
         (
             "expert cache READY",
@@ -68,6 +84,7 @@ def _try(label: str, fn) -> Check:
 
 def loaded_model_checks(model: Any, pre: dict[str, Any], freeze_cfg) -> list[Check]:
     n_nf4 = count_nf4_expert_modules(model)
+    layout = pre.get("layout") or ""
     checks: list[Check] = [
         ("base model loaded", model is not None, type(model).__name__),
         _try("router frozen", lambda: assert_router_frozen(model) if freeze_cfg.freeze_router else None),
@@ -77,18 +94,34 @@ def loaded_model_checks(model: Any, pre: dict[str, Any], freeze_cfg) -> list[Che
             lambda: assert_packed_experts_frozen(model) if freeze_cfg.freeze_packed_experts else None,
         ),
         _try("LoRA attached", lambda: assert_lora_attached(model)),
-        (
-            "expert cache READY",
-            pre.get("cache") == "READY",
-            f"cache={pre.get('cache')}",
-        ),
-        (
-            "BF16 expert path disabled",
-            pre.get("bf16_expert_read") == "SKIPPED",
-            f"bf16_expert_read={pre.get('bf16_expert_read')}",
-        ),
-        ("NF4 experts attached", n_nf4 > 0, f"nf4_modules={n_nf4}"),
     ]
+    if layout == "per_expert_linear" or pre.get("cache") == "NOT_REQUIRED":
+        checks.extend(
+            [
+                ("expert cache not required", True, f"layout={layout or 'per_expert_linear'}"),
+                (
+                    "BF16 experts go through bitsandbytes",
+                    pre.get("bf16_expert_read") == "BNB_LINEAR4BIT",
+                    f"bf16_expert_read={pre.get('bf16_expert_read')}",
+                ),
+            ]
+        )
+    else:
+        checks.extend(
+            [
+                (
+                    "expert cache READY",
+                    pre.get("cache") == "READY",
+                    f"cache={pre.get('cache')}",
+                ),
+                (
+                    "BF16 expert path disabled",
+                    pre.get("bf16_expert_read") == "SKIPPED",
+                    f"bf16_expert_read={pre.get('bf16_expert_read')}",
+                ),
+                ("NF4 experts attached", n_nf4 > 0, f"nf4_modules={n_nf4}"),
+            ]
+        )
     return checks
 
 

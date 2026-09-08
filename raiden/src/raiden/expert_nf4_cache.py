@@ -21,16 +21,54 @@ logger = logging.getLogger("raiden")
 
 CACHE_MANIFEST = "manifest.json"
 CACHE_VERSION = 2
-CACHE_STATES = ("MISSING", "MATERIALIZING", "INCOMPLETE", "READY", "CORRUPTED", "NO_INDEX")
+CACHE_STATES = (
+    "MISSING",
+    "MATERIALIZING",
+    "INCOMPLETE",
+    "READY",
+    "CORRUPTED",
+    "NO_INDEX",
+    "NOT_REQUIRED",
+)
 BLOCK_TRAIN_STATES = frozenset({"MISSING", "MATERIALIZING", "INCOMPLETE", "CORRUPTED", "NO_INDEX"})
 
 
 def is_packed_expert_weight_key(key: str) -> bool:
-    """True for Glm5Next packed expert Parameters, not shared-expert Linears."""
+    """True for fused Glm5Next packed expert Parameters, not shared-expert Linears."""
     parts = key.split(".")
     if "shared_experts" in parts:
         return False
     return key.endswith(".experts.gate_up_proj") or key.endswith(".experts.down_proj")
+
+
+def is_routed_expert_linear_key(key: str) -> bool:
+    """Official GLM-5.3-Flash-BF16: per-expert Linears, not packed 3D.
+
+    model.language_model.layers.X.mlp.experts.N.{gate,up,down}_proj.weight
+    """
+    if "shared_experts" in key.split("."):
+        return False
+    parts = key.split(".")
+    try:
+        i = parts.index("experts")
+    except ValueError:
+        return False
+    if i + 2 >= len(parts) or not parts[i + 1].isdigit():
+        return False
+    return ".".join(parts[i + 2 :]) in {"gate_proj.weight", "up_proj.weight", "down_proj.weight"}
+
+
+def expert_storage_layout(model_dir: str | Path) -> str:
+    """packed_3d | per_expert_linear | unknown"""
+    try:
+        keys = list(iter_index_weight_map(Path(model_dir)))
+    except (FileNotFoundError, ValueError):
+        return "unknown"
+    if any(is_packed_expert_weight_key(k) for k in keys):
+        return "packed_3d"
+    if any(is_routed_expert_linear_key(k) for k in keys):
+        return "per_expert_linear"
+    return "unknown"
 
 
 def expert_nf4_cache_dir(explicit: str | Path | None = None) -> Path | None:
@@ -174,7 +212,7 @@ def refuse_unready_expert_cache(report: dict[str, Any]) -> None:
     from raiden.compatibility import RaidenCompatibilityError
 
     status = str(report.get("cache") or "MISSING")
-    if status == "READY":
+    if status in {"READY", "NOT_REQUIRED"}:
         return
     if live_expert_quant_allowed():
         logger.warning(
@@ -259,11 +297,15 @@ def inspect_cache_state(model_dir: Path, cache_dir: Path | None) -> str:
     MATERIALIZING or INCOMPLETE until finalize_materialize writes READY.
     """
     if cache_dir is None:
-        return "MISSING"
+        layout = expert_storage_layout(model_dir) if Path(model_dir).joinpath("model.safetensors.index.json").exists() else "unknown"
+        return "NOT_REQUIRED" if layout == "per_expert_linear" else "MISSING"
     cache_dir = Path(cache_dir)
     index = Path(model_dir) / "model.safetensors.index.json"
     if not index.exists():
         return "NO_INDEX"
+    layout = expert_storage_layout(model_dir)
+    if layout == "per_expert_linear":
+        return "NOT_REQUIRED"
     try:
         expected = packed_expert_keys(Path(model_dir))
     except Exception:
@@ -323,9 +365,10 @@ def expert_cache_preflight(model_dir: str | Path, cache_dir: Path | None, policy
     except FileNotFoundError:
         status = "NO_INDEX"
     stats = cache_dir_stats(cache_dir) if cache_dir is not None else {"n_files": 0, "n_bytes": 0}
-    bf16_read = "SKIPPED" if status == "READY" else "LIVE_QUANT"
+    bf16_read = "SKIPPED" if status == "READY" else ("BNB_LINEAR4BIT" if status == "NOT_REQUIRED" else "LIVE_QUANT")
     report = {
         "expert_policy": policy,
+        "layout": expert_storage_layout(model_dir) if (model_dir / "model.safetensors.index.json").exists() else "unknown",
         "cache": status,
         "cache_dir": str(cache_dir) if cache_dir is not None else "",
         "cached_experts": cached,
@@ -338,9 +381,10 @@ def expert_cache_preflight(model_dir: str | Path, cache_dir: Path | None, policy
         "cache_bytes": stats["n_bytes"],
     }
     logger.info(
-        "expert_policy=%s cache=%s cached_experts=%s/%s layers=%s experts_per_layer=%s "
+        "expert_policy=%s layout=%s cache=%s cached_experts=%s/%s layers=%s experts_per_layer=%s "
         "bf16_expert_read=%s checksum=%s cache_dir=%s files=%s bytes=%s",
         report["expert_policy"],
+        report["layout"],
         report["cache"],
         report["cached_experts"],
         report["expected_experts"],

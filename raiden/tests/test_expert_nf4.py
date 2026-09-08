@@ -77,6 +77,38 @@ def test_packed_expert_key_skips_shared():
     assert not is_packed_expert_weight_key("model.language_model.layers.3.mlp.gate_proj")
 
 
+def test_routed_expert_linear_keys_match_official_bf16():
+    from raiden.expert_nf4_cache import expert_storage_layout, is_routed_expert_linear_key
+
+    k = "model.language_model.layers.10.mlp.experts.0.gate_proj.weight"
+    assert is_routed_expert_linear_key(k)
+    assert is_routed_expert_linear_key(
+        "model.language_model.layers.10.mlp.experts.287.down_proj.weight"
+    )
+    assert not is_routed_expert_linear_key(
+        "model.language_model.layers.10.mlp.shared_experts.gate_proj.weight"
+    )
+    assert not is_packed_expert_weight_key(k)
+
+
+def test_per_expert_linear_layout_skips_packed_cache(tmp_path):
+    from raiden.expert_nf4_cache import expert_storage_layout
+
+    keys = [
+        "model.language_model.layers.10.mlp.experts.0.gate_proj.weight",
+        "model.language_model.layers.10.mlp.experts.0.up_proj.weight",
+        "model.language_model.layers.10.mlp.experts.0.down_proj.weight",
+        "model.language_model.layers.10.mlp.shared_experts.gate_proj.weight",
+    ]
+    model_dir = tmp_path / "model"
+    _fake_index(model_dir, keys)
+    assert expert_storage_layout(model_dir) == "per_expert_linear"
+    miss = expert_cache_preflight(model_dir, tmp_path / "cache", "nf4_freeze")
+    assert miss["cache"] == "NOT_REQUIRED"
+    assert miss["bf16_expert_read"] == "BNB_LINEAR4BIT"
+    refuse_unready_expert_cache(miss)
+
+
 def test_estimated_nf4_cache_is_volume_not_image_scale():
     forty = estimated_nf4_cache_bytes(40)
     assert 100 * 1024**3 < forty < 200 * 1024**3

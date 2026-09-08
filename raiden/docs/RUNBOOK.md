@@ -90,7 +90,11 @@ States:
 - **Train** wraps `safe_open.get_tensor` **only if READY**: cache hits return a meta tensor (no 9.7 GiB BF16 read) and attach from `.pt`.
 - Floor after cache: Linear/vision/embeddings through BnB (~33 GiB) + reading the NF4 cache (~150 GiB) — tens of minutes, not hours.
 
-**Expert NF4 cache is an external runtime artifact. It is not a model checkpoint and must not be pushed as model weights.** Keep `/workspace/cache/expert_nf4` on the **network volume**, never in the Docker image. Payload estimate: ~3.6 GiB NF4 q-data per MoE layer × ~40 layers ≈ **140–180 GiB** on disk (plus `torch.save` overhead). First `materialize_experts` is I/O-bound on ~610 GiB BF16 reads; with a free GPU expect **~45–90 min**, not the 2–3 h in-train path. Interrupted runs resume. Next train must log `cache=READY` and `bf16_expert_read=SKIPPED` before `from_pretrained`. `MISSING` / `MATERIALIZING` / `INCOMPLETE` / `CORRUPTED` abort.
+**Expert NF4 cache is an external runtime artifact. It is not a model checkpoint and must not be pushed as model weights.** Keep `/workspace/cache/expert_nf4` on the **network volume**, never in the Docker image.
+
+Official `zai-org/GLM-5.3-Flash-BF16` (this pod) stores routed experts as **per-expert Linears** (`mlp.experts.N.{gate,up,down}_proj.weight`, 37152 tensors). That is not packed 3D `gate_up_proj`. Packed `materialize_experts` does **not** apply. Stage I QLoRA uses bitsandbytes Linear4bit on those Linears and freezes them. `cache=NOT_REQUIRED`. Do not write 37152 `.pt` files.
+
+Packed 3D dumps still use the NF4 cache path (`cache=READY`).
 
 Still QLoRA. Still Linear-only LoRA.
 

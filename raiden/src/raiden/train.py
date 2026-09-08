@@ -11,7 +11,12 @@ from pathlib import Path
 from raiden.compatibility import RaidenCompatibilityError
 from raiden.config import RaidenConfig
 from raiden.expert_nf4 import resolve_packed_expert_policy
-from raiden.expert_nf4_cache import expert_cache_preflight, expert_nf4_cache_dir, refuse_unready_expert_cache
+from raiden.expert_nf4_cache import (
+    expert_cache_preflight,
+    expert_nf4_cache_dir,
+    expert_storage_layout,
+    refuse_unready_expert_cache,
+)
 from raiden.logging import setup_logging, write_json
 from raiden.model import load_qlora_model, load_tokenizer_and_processor
 from raiden.paths import apply_cache_env, logs_dir
@@ -57,10 +62,17 @@ def main(argv=None) -> int:
 
     try:
         policy = resolve_packed_expert_policy(cfg.qlora.packed_expert_policy)
+        layout = expert_storage_layout(cfg.base_model)
+        logger.info("expert_layout=%s", layout)
         if policy == "nf4_freeze":
             pre = expert_cache_preflight(cfg.base_model, expert_nf4_cache_dir(), policy)
             refuse_unready_expert_cache(pre)
-            logger.info("runtime validate cache=%s bf16_expert_read=%s", pre["cache"], pre["bf16_expert_read"])
+            logger.info(
+                "runtime validate cache=%s layout=%s bf16_expert_read=%s",
+                pre["cache"],
+                pre.get("layout"),
+                pre["bf16_expert_read"],
+            )
         tokenizer, _processor = load_tokenizer_and_processor(
             cfg.base_model, token=os.environ.get("HF_TOKEN")
         )
