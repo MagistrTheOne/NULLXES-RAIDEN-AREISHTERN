@@ -25,6 +25,7 @@ from raiden.expert_nf4_cache import (
     expert_nf4_cache_dir,
     expert_storage_layout,
     refuse_unready_expert_cache,
+    runtime_expert_layout,
 )
 from raiden.freeze import (
     apply_freeze,
@@ -133,10 +134,13 @@ def load_quantized_base(cfg):
     auto_cls = _resolve_causal_class()
     expert_policy = resolve_packed_expert_policy(cfg.qlora.packed_expert_policy)
     logger.info(
-        "loading %s via %s + BitsAndBytes 4-bit NF4 (packed_expert_policy=%s)",
+        "loading %s via %s + BitsAndBytes 4-bit NF4 (packed_expert_policy=%s "
+        "bnb_4bit_compute_dtype=%s quant_storage=%s)",
         cfg.base_model,
         auto_cls.__name__,
         expert_policy,
+        getattr(bnb, "bnb_4bit_compute_dtype", None),
+        getattr(bnb, "bnb_4bit_quant_storage", None),
     )
 
     # device_map="auto" sees BF16 packed experts (~610 GiB) and offloads to CPU.
@@ -150,6 +154,7 @@ def load_quantized_base(cfg):
 
     model_kwargs: dict[str, Any] = dict(
         quantization_config=bnb,
+        torch_dtype=_dtype(cfg.qlora.compute_dtype),
         device_map=device_map,
         trust_remote_code=True,
         token=token,
@@ -173,28 +178,31 @@ def load_quantized_base(cfg):
 
     try:
         if expert_policy == "nf4_freeze":
-            layout = expert_storage_layout(cfg.base_model)
-            logger.info("expert_layout=%s packed_expert_policy=%s", layout, expert_policy)
-            if layout == "per_expert_linear":
-                # Official BF16 dump: 288 routed experts as separate Linears.
-                # BnB Linear4bit wraps them. Packed Glm5NextTextExperts NF4 cache is N/A.
+            checkpoint_layout = expert_storage_layout(cfg.base_model)
+            runtime = runtime_expert_layout(cfg.base_model)
+            logger.info(
+                "checkpoint_layout=%s expert_layout=%s packed_expert_policy=%s",
+                checkpoint_layout,
+                runtime,
+                expert_policy,
+            )
+            # HF index may be per-expert Linear; runtime is still packed 3D Parameters.
+            # Never take the BnB Linear4bit expert path for GLM-5.3-Flash.
+            install_expert_nf4_forward()
+            cache_dir = expert_nf4_cache_dir()
+            pre = expert_cache_preflight(cfg.base_model, cache_dir, expert_policy)
+            refuse_unready_expert_cache(pre)
+            skip_bf16 = skip_cached_expert_reads(cache_dir) if pre["cache"] == "READY" else nullcontext()
+            with skip_bf16, expert_nf4_load_hooks():
                 model = auto_cls.from_pretrained(cfg.base_model, **model_kwargs)
-            else:
-                install_expert_nf4_forward()
-                cache_dir = expert_nf4_cache_dir()
-                pre = expert_cache_preflight(cfg.base_model, cache_dir, expert_policy)
-                refuse_unready_expert_cache(pre)
-                skip_bf16 = skip_cached_expert_reads(cache_dir) if pre["cache"] == "READY" else nullcontext()
-                with skip_bf16, expert_nf4_load_hooks():
-                    model = auto_cls.from_pretrained(cfg.base_model, **model_kwargs)
-                attach_cached_experts_on_model(model, cache_dir)
-                n_nf4 = count_nf4_expert_modules(model)
-                if n_nf4 == 0:
-                    raise RaidenCompatibilityError(
-                        "packed_expert_policy=nf4_freeze but no Glm5NextTextExperts were NF4-quantized "
-                        "during load. Refusing to continue with BF16 packed experts (will not fit)."
-                    )
-                logger.info("packed experts NF4-ready modules: %s", n_nf4)
+            attach_cached_experts_on_model(model, cache_dir)
+            n_nf4 = count_nf4_expert_modules(model)
+            if n_nf4 == 0:
+                raise RaidenCompatibilityError(
+                    "packed_expert_policy=nf4_freeze but no Glm5NextTextExperts were NF4-quantized "
+                    "during load. Refusing to continue with BF16 packed experts (will not fit)."
+                )
+            logger.info("packed experts NF4-ready modules: %s", n_nf4)
         else:
             model = auto_cls.from_pretrained(cfg.base_model, **model_kwargs)
     except RaidenCompatibilityError:

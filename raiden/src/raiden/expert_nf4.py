@@ -16,9 +16,10 @@ from typing import Any
 
 from raiden.expert_nf4_cache import (
     apply_rows_to_module,
+    checkpoint_key_to_packed_key,
     expert_nf4_cache_dir,
     load_expert_blob,
-    peek_cached_shape,
+    meta_shape_for_skipped_read,
     resolve_cached_key,
     save_expert_blob,
 )
@@ -346,6 +347,7 @@ def skip_cached_expert_reads(cache_dir=None):
     import torch
 
     patches: list[tuple[Any, str, Any]] = []
+    skipped_packed: set[str] = set()
 
     class _Handle:
         def __init__(self, inner):
@@ -364,12 +366,18 @@ def skip_cached_expert_reads(cache_dir=None):
             return None
 
         def get_tensor(self, name):
-            cached = resolve_cached_key(cache_dir, name)
+            packed = checkpoint_key_to_packed_key(name)
+            cached = resolve_cached_key(cache_dir, packed) if packed else None
             if cached:
-                shape = peek_cached_shape(cache_dir, cached)
-                if shape is None:
-                    shape = (0,)
-                logger.info("skip BF16 read %s (cache hit, meta %s)", name, shape)
+                shape = meta_shape_for_skipped_read(cache_dir, name, cached)
+                if cached not in skipped_packed:
+                    skipped_packed.add(cached)
+                    logger.info(
+                        "skip BF16 expert reads for %s (hit %s, meta %s)",
+                        cached,
+                        name,
+                        shape,
+                    )
                 return torch.empty(shape, dtype=torch.bfloat16, device="meta")
             return self._inner.get_tensor(name)
 

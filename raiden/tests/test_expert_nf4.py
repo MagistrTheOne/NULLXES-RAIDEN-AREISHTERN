@@ -92,7 +92,8 @@ def test_routed_expert_linear_keys_match_official_bf16():
 
 
 def test_resolve_hub_id_to_local_snapshot(tmp_path, monkeypatch):
-    from raiden.expert_nf4_cache import resolve_model_dir
+    from raiden.compatibility import RaidenCompatibilityError
+    from raiden.expert_nf4_cache import resolve_model_dir, runtime_expert_layout
 
     models = tmp_path / "models"
     snap = models / "GLM-5.3-Flash-BF16"
@@ -103,25 +104,97 @@ def test_resolve_hub_id_to_local_snapshot(tmp_path, monkeypatch):
     assert got == snap
     pre = expert_cache_preflight("zai-org/GLM-5.3-Flash-BF16", tmp_path / "cache", "nf4_freeze")
     assert pre["layout"] == "per_expert_linear"
-    assert pre["cache"] == "NOT_REQUIRED"
+    assert pre["runtime_layout"] == "packed_runtime"
+    assert runtime_expert_layout(snap) == "packed_runtime"
+    assert pre["cache"] == "MISSING"
+    assert pre["bf16_expert_read"] == "LIVE_QUANT"
+    try:
+        refuse_unready_expert_cache(pre)
+        raise AssertionError("expected refuse")
+    except RaidenCompatibilityError as exc:
+        assert "MISSING" in str(exc)
 
 
-def test_per_expert_linear_layout_skips_packed_cache(tmp_path):
-    from raiden.expert_nf4_cache import expert_storage_layout
+def test_per_expert_linear_checkpoint_still_needs_packed_cache(tmp_path):
+    from raiden.compatibility import RaidenCompatibilityError
+    from raiden.expert_nf4_cache import (
+        checkpoint_key_to_packed_key,
+        expert_storage_layout,
+        packed_expert_keys,
+        runtime_expert_layout,
+    )
 
     keys = [
         "model.language_model.layers.10.mlp.experts.0.gate_proj.weight",
         "model.language_model.layers.10.mlp.experts.0.up_proj.weight",
         "model.language_model.layers.10.mlp.experts.0.down_proj.weight",
+        "model.language_model.layers.10.mlp.experts.1.gate_proj.weight",
+        "model.language_model.layers.10.mlp.experts.1.up_proj.weight",
+        "model.language_model.layers.10.mlp.experts.1.down_proj.weight",
         "model.language_model.layers.10.mlp.shared_experts.gate_proj.weight",
     ]
     model_dir = tmp_path / "model"
     _fake_index(model_dir, keys)
     assert expert_storage_layout(model_dir) == "per_expert_linear"
+    assert runtime_expert_layout(model_dir) == "packed_runtime"
+    packed = packed_expert_keys(model_dir)
+    assert packed == [
+        "model.language_model.layers.10.mlp.experts.gate_up_proj",
+        "model.language_model.layers.10.mlp.experts.down_proj",
+    ]
+    lin = "model.language_model.layers.10.mlp.experts.0.gate_proj.weight"
+    assert checkpoint_key_to_packed_key(lin) == packed[0]
     miss = expert_cache_preflight(model_dir, tmp_path / "cache", "nf4_freeze")
-    assert miss["cache"] == "NOT_REQUIRED"
-    assert miss["bf16_expert_read"] == "BNB_LINEAR4BIT"
-    refuse_unready_expert_cache(miss)
+    assert miss["cache"] == "MISSING"
+    assert miss["expected_experts"] == 2
+    assert miss["bf16_expert_read"] == "LIVE_QUANT"
+    try:
+        refuse_unready_expert_cache(miss)
+        raise AssertionError("expected refuse")
+    except RaidenCompatibilityError as exc:
+        assert "MISSING" in str(exc)
+
+    cache = tmp_path / "cache"
+    k0, k1 = packed
+    info0 = _put_tensor(cache, k0, shape=(2, 4, 8))
+    info1 = _put_tensor(cache, k1, payload=b"yy", shape=(2, 8, 2))
+    tensors = {k0: info0, k1: info1}
+    save_manifest(
+        cache,
+        {
+            "v": 2,
+            "status": "READY",
+            "quant": "nf4",
+            "layers": 1,
+            "experts_per_layer": 2,
+            "linear_shapes": {"gate_proj": [2, 8], "up_proj": [2, 8], "down_proj": [8, 2]},
+            "tensors": tensors,
+            "checksum": manifest_fingerprint(tensors),
+        },
+    )
+    hit = expert_cache_preflight(model_dir, cache, "nf4_freeze")
+    assert hit["cache"] == "READY"
+    assert hit["bf16_expert_read"] == "SKIPPED"
+    refuse_unready_expert_cache(hit)
+    from raiden.expert_nf4_cache import meta_shape_for_skipped_read
+
+    assert meta_shape_for_skipped_read(cache, lin, k0) == (2, 8)
+    assert meta_shape_for_skipped_read(
+        cache, "model.language_model.layers.10.mlp.experts.0.down_proj.weight", k1
+    ) == (8, 2)
+
+
+def test_fuse_gate_up_matches_hf_concatenate_dim1():
+    import torch
+
+    from raiden.expert_nf4_cache import fuse_gate_up_stacked
+
+    gate = torch.arange(2 * 3 * 4, dtype=torch.float32).reshape(2, 3, 4)
+    up = gate + 100
+    packed = fuse_gate_up_stacked(gate, up)
+    assert packed.shape == (2, 6, 4)
+    assert torch.equal(packed[:, :3], gate)
+    assert torch.equal(packed[:, 3:], up)
 
 
 def test_estimated_nf4_cache_is_volume_not_image_scale():

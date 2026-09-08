@@ -16,6 +16,7 @@ from raiden.expert_nf4_cache import (
     expert_nf4_cache_dir,
     expert_storage_layout,
     refuse_unready_expert_cache,
+    runtime_expert_layout,
 )
 from raiden.logging import setup_logging, write_json
 from raiden.model import load_qlora_model, load_tokenizer_and_processor
@@ -63,14 +64,16 @@ def main(argv=None) -> int:
     try:
         policy = resolve_packed_expert_policy(cfg.qlora.packed_expert_policy)
         layout = expert_storage_layout(cfg.base_model)
-        logger.info("expert_layout=%s", layout)
+        runtime = runtime_expert_layout(cfg.base_model)
+        logger.info("checkpoint_layout=%s expert_layout=%s", layout, runtime)
         if policy == "nf4_freeze":
             pre = expert_cache_preflight(cfg.base_model, expert_nf4_cache_dir(), policy)
             refuse_unready_expert_cache(pre)
             logger.info(
-                "runtime validate cache=%s layout=%s bf16_expert_read=%s",
+                "runtime validate cache=%s checkpoint_layout=%s expert_layout=%s bf16_expert_read=%s",
                 pre["cache"],
-                pre.get("layout"),
+                pre.get("checkpoint_layout") or layout,
+                pre.get("runtime_layout") or runtime,
                 pre["bf16_expert_read"],
             )
         tokenizer, _processor = load_tokenizer_and_processor(

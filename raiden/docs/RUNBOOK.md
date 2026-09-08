@@ -86,15 +86,13 @@ States:
 | `READY` | manifest verified; SFT may start |
 | `CORRUPTED` | size or checksum mismatch |
 
-- **Materialize** reads only packed expert keys (~610 GiB once), quantizes int32-safe chunks on a **free** GPU, writes ~150 GiB NF4. Sets `MATERIALIZING` immediately; `READY` only after every expert is on disk. Resume-safe: finished keys are skipped.
-- **Train** wraps `safe_open.get_tensor` **only if READY**: cache hits return a meta tensor (no 9.7 GiB BF16 read) and attach from `.pt`.
+- **Materialize** walks the checkpoint (packed 3D keys, or Flash's per-expert Linears stacked into packed runtime tensors), quantizes int32-safe chunks on a **free** GPU, writes ~150 GiB NF4 as **two blobs per MoE layer**. Sets `MATERIALIZING` immediately; `READY` only after every packed key is on disk. Resume-safe: finished keys are skipped.
+- **Train** wraps `safe_open.get_tensor` **only if READY**: cache hits return a meta tensor (no 9.7 GiB BF16 read, and no 37152 Linear reads) and attach from `.pt`.
 - Floor after cache: Linear/vision/embeddings through BnB (~33 GiB) + reading the NF4 cache (~150 GiB) — tens of minutes, not hours.
 
 **Expert NF4 cache is an external runtime artifact. It is not a model checkpoint and must not be pushed as model weights.** Keep `/workspace/cache/expert_nf4` on the **network volume**, never in the Docker image.
 
-Official `zai-org/GLM-5.3-Flash-BF16` (this pod) stores routed experts as **per-expert Linears** (`mlp.experts.N.{gate,up,down}_proj.weight`, 37152 tensors). That is not packed 3D `gate_up_proj`. Packed `materialize_experts` does **not** apply. Stage I QLoRA uses bitsandbytes Linear4bit on those Linears and freezes them. `cache=NOT_REQUIRED`. Do not write 37152 `.pt` files.
-
-Packed 3D dumps still use the NF4 cache path (`cache=READY`).
+Official `zai-org/GLM-5.3-Flash-BF16` stores routed experts as **per-expert Linears** in the HF index (`mlp.experts.N.{gate,up,down}_proj.weight`, 37152 tensors). **Runtime** (`Glm5NextTextExperts`) is packed 3D `gate_up_proj` / `down_proj`. HF index ≠ runtime layout. Train must log `checkpoint_layout=per_expert_linear expert_layout=packed_runtime cache=READY bf16_expert_read=SKIPPED`. Do **not** take `cache=NOT_REQUIRED` / `BNB_LINEAR4BIT`. Materialize stacks Linears into packed NF4; do not write 37152 `.pt` files.
 
 Still QLoRA. Still Linear-only LoRA.
 

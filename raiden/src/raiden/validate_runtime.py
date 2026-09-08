@@ -20,7 +20,6 @@ from raiden.expert_nf4 import count_nf4_expert_modules, resolve_packed_expert_po
 from raiden.expert_nf4_cache import (
     expert_cache_preflight,
     expert_nf4_cache_dir,
-    expert_storage_layout,
     refuse_unready_expert_cache,
 )
 from raiden.freeze import (
@@ -44,18 +43,12 @@ def _mark(ok: bool) -> str:
 def cache_checks(model_dir: str, policy: str) -> tuple[list[Check], dict[str, Any]]:
     cache_dir = expert_nf4_cache_dir()
     pre = expert_cache_preflight(model_dir, cache_dir, policy)
-    layout = pre.get("layout") or expert_storage_layout(model_dir)
-    if layout == "per_expert_linear" or pre["cache"] == "NOT_REQUIRED":
+    if pre["cache"] == "NOT_REQUIRED":
         checks = [
             (
-                "expert layout per-expert Linear",
+                "expert cache not required",
                 True,
-                "BnB Linear4bit; packed NF4 cache not used",
-            ),
-            (
-                "BF16 experts go through bitsandbytes",
-                pre["bf16_expert_read"] == "BNB_LINEAR4BIT",
-                f"bf16_expert_read={pre['bf16_expert_read']}",
+                "no packed runtime experts in index",
             ),
         ]
         return checks, pre
@@ -63,7 +56,8 @@ def cache_checks(model_dir: str, policy: str) -> tuple[list[Check], dict[str, An
         (
             "expert cache READY",
             pre["cache"] == "READY",
-            f"cache={pre['cache']} {pre['cached_experts']}/{pre['expected_experts']}",
+            f"cache={pre['cache']} {pre['cached_experts']}/{pre['expected_experts']} "
+            f"checkpoint={pre.get('checkpoint_layout')} runtime={pre.get('runtime_layout')}",
         ),
         (
             "BF16 expert path disabled",
@@ -84,7 +78,6 @@ def _try(label: str, fn) -> Check:
 
 def loaded_model_checks(model: Any, pre: dict[str, Any], freeze_cfg) -> list[Check]:
     n_nf4 = count_nf4_expert_modules(model)
-    layout = pre.get("layout") or ""
     checks: list[Check] = [
         ("base model loaded", model is not None, type(model).__name__),
         _try("router frozen", lambda: assert_router_frozen(model) if freeze_cfg.freeze_router else None),
@@ -95,17 +88,8 @@ def loaded_model_checks(model: Any, pre: dict[str, Any], freeze_cfg) -> list[Che
         ),
         _try("LoRA attached", lambda: assert_lora_attached(model)),
     ]
-    if layout == "per_expert_linear" or pre.get("cache") == "NOT_REQUIRED":
-        checks.extend(
-            [
-                ("expert cache not required", True, f"layout={layout or 'per_expert_linear'}"),
-                (
-                    "BF16 experts go through bitsandbytes",
-                    pre.get("bf16_expert_read") == "BNB_LINEAR4BIT",
-                    f"bf16_expert_read={pre.get('bf16_expert_read')}",
-                ),
-            ]
-        )
+    if pre.get("cache") == "NOT_REQUIRED":
+        checks.append(("expert cache not required", True, "no packed runtime experts"))
     else:
         checks.extend(
             [
